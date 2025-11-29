@@ -281,7 +281,7 @@ impl TlsLayerBase {
     pub fn new(context: Context, conn: Connection) -> Self {
         let tunnel_connection = conn.clone();
         let mut tunnel = TunnelLayer::new(context, tunnel_connection, conn);
-        tunnel.child_layer = Some(Box::new(NextLayer::new(tunnel.base.context.clone(), false)));
+        tunnel.child_layer = Some(Box::new(NextLayer::new(tunnel.base.context.clone())));
 
         Self {
             tunnel,
@@ -430,17 +430,14 @@ impl TlsLayerBase {
         // Extract TLS version, cipher, ALPN from SSL connection if available
         if let Some(ref ssl) = self.ssl_connection {
             // Extract TLS version
-            if let Some(version_str) = ssl.version_str() {
-                self.tunnel.conn.tls_version = match version_str {
-                    "TLSv1.3" => Some(TlsVersion::TLSv1_3),
-                    "TLSv1.2" => Some(TlsVersion::TLSv1_2),
-                    "TLSv1.1" => Some(TlsVersion::TLSv1_1),
-                    "TLSv1" => Some(TlsVersion::TLSv1_0),
-                    _ => Some(TlsVersion::TLSv1_3),
-                };
-            } else {
-                self.tunnel.conn.tls_version = Some(TlsVersion::TLSv1_3);
-            }
+            let version_str = ssl.version_str();
+            self.tunnel.conn.tls_version = match version_str {
+                "TLSv1.3" => Some(TlsVersion::TLSv1_3),
+                "TLSv1.2" => Some(TlsVersion::TLSv1_2),
+                "TLSv1.1" => Some(TlsVersion::TLSv1_1),
+                "TLSv1" => Some(TlsVersion::TLSv1),
+                _ => Some(TlsVersion::TLSv1_3),
+            };
 
             // Extract cipher name
             if let Some(cipher) = ssl.current_cipher() {
@@ -519,7 +516,7 @@ impl ClientTlsLayer {
         let server_tls_available = context
             .layers
             .iter()
-            .any(|layer| layer.layer_name() == "ServerTlsLayer");
+            .any(|layer| layer.name == "ServerTlsLayer");
 
         Self {
             base,
@@ -756,7 +753,7 @@ impl ServerTlsLayer {
     pub fn new(context: Context, conn: Option<Server>) -> Self {
         let server_conn = conn
             .map(|s| s.connection)
-            .unwrap_or_else(|| context.server.connection.clone());
+            .unwrap_or_else(|| context.server.as_ref().map(|s| s.connection.clone()).unwrap_or_default());
 
         let base = TlsLayerBase::new(context, server_conn);
 

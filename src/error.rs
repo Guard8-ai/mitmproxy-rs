@@ -51,6 +51,9 @@ pub enum Error {
 
     #[error("Proxy error: {0}")]
     Proxy(String),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Alias for proxy-specific errors

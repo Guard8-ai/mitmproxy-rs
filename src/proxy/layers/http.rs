@@ -391,22 +391,38 @@ pub struct GetHttpConnection {
 }
 
 impl Command for GetHttpConnection {
+    fn command_name(&self) -> &'static str {
+        "GetHttpConnection"
+    }
+
     fn is_blocking(&self) -> bool {
         true
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 impl HttpCommand for GetHttpConnection {}
 
 /// Command to send HTTP event, matching Python's SendHttp
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SendHttp {
     pub event: Box<dyn HttpEvent>,
-    pub connection: Arc<Connection>,
+    pub connection: Connection,
 }
 
 impl Command for SendHttp {
+    fn command_name(&self) -> &'static str {
+        "SendHttp"
+    }
+
     fn is_blocking(&self) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 impl HttpCommand for SendHttp {}
@@ -418,8 +434,16 @@ pub struct DropStream {
 }
 
 impl Command for DropStream {
+    fn command_name(&self) -> &'static str {
+        "DropStream"
+    }
+
     fn is_blocking(&self) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 impl HttpCommand for DropStream {}
@@ -494,10 +518,15 @@ pub struct HttpStream {
 
 impl HttpStream {
     pub fn new(context: Context, stream_id: StreamId) -> Self {
-        let flow = HTTPFlow::new(
-            context.client_conn.clone(),
-            context.server_conn.clone(),
+        // Create a placeholder request - will be populated when actual request is received
+        let request = crate::flow::HTTPRequest::new(
+            "GET".to_string(),
+            "http".to_string(),
+            "placeholder".to_string(),
+            80,
+            "/".to_string(),
         );
+        let flow = HTTPFlow::new(request);
 
         Self {
             stream_id,
@@ -514,40 +543,40 @@ impl HttpStream {
     pub async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         debug!("HttpStream {} handling event: {:?}", self.stream_id, std::any::type_name_of_val(&*event));
 
-        if let Some(start_event) = event.downcast_ref::<Start>() {
+        if let Some(start_event) = event.as_any().downcast_ref::<Start>() {
             return self.handle_start().await;
         }
 
         // Handle HTTP events based on current state
-        if let Some(req_headers) = event.downcast_ref::<RequestHeaders>() {
+        if let Some(req_headers) = event.as_any().downcast_ref::<RequestHeaders>() {
             return self.handle_request_headers(req_headers.clone()).await;
         }
 
-        if let Some(req_data) = event.downcast_ref::<RequestData>() {
+        if let Some(req_data) = event.as_any().downcast_ref::<RequestData>() {
             return self.handle_request_data(req_data.clone()).await;
         }
 
-        if let Some(req_end) = event.downcast_ref::<RequestEndOfMessage>() {
+        if let Some(req_end) = event.as_any().downcast_ref::<RequestEndOfMessage>() {
             return self.handle_request_end(req_end.clone()).await;
         }
 
-        if let Some(resp_headers) = event.downcast_ref::<ResponseHeaders>() {
+        if let Some(resp_headers) = event.as_any().downcast_ref::<ResponseHeaders>() {
             return self.handle_response_headers(resp_headers.clone()).await;
         }
 
-        if let Some(resp_data) = event.downcast_ref::<ResponseData>() {
+        if let Some(resp_data) = event.as_any().downcast_ref::<ResponseData>() {
             return self.handle_response_data(resp_data.clone()).await;
         }
 
-        if let Some(resp_end) = event.downcast_ref::<ResponseEndOfMessage>() {
+        if let Some(resp_end) = event.as_any().downcast_ref::<ResponseEndOfMessage>() {
             return self.handle_response_end(resp_end.clone()).await;
         }
 
-        if let Some(req_error) = event.downcast_ref::<RequestProtocolError>() {
+        if let Some(req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
             return self.handle_protocol_error(req_error.message.clone()).await;
         }
 
-        if let Some(resp_error) = event.downcast_ref::<ResponseProtocolError>() {
+        if let Some(resp_error) = event.as_any().downcast_ref::<ResponseProtocolError>() {
             return self.handle_protocol_error(resp_error.message.clone()).await;
         }
 
@@ -563,11 +592,12 @@ impl HttpStream {
     }
 
     async fn handle_request_headers(&mut self, event: RequestHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        debug!("HttpStream {} received request headers for {}", self.stream_id, event.request.url);
+        debug!("HttpStream {} received request headers for {}", self.stream_id, event.request.url());
 
         // Update flow with request
-        self.flow.request = Some(event.request.clone());
-        self.flow.live = true;
+        self.flow.request = event.request.clone();
+        // Note: HTTPFlow doesn't have a 'live' field, flow.flow.modified could be used instead
+        self.flow.flow.modified = true;
 
         // Validate request
         if let Err(error_msg) = self.validate_request(&event.request) {
@@ -578,7 +608,7 @@ impl HttpStream {
                         message: error_msg,
                         code: ErrorCode::RequestValidationFailed,
                     }),
-                    connection: self.flow.client_conn.clone(),
+                    connection: crate::connection::Connection::default(),
                 })
             ]);
         }
@@ -611,10 +641,8 @@ impl HttpStream {
         debug!("HttpStream {} request complete", self.stream_id);
 
         // Finalize request body
-        if let Some(ref mut request) = self.flow.request {
-            request.content = self.request_body_buf.buf.clone();
-            self.request_body_buf.clear();
-        }
+        self.flow.request.content = Some(self.request_body_buf.buf.clone());
+        self.request_body_buf.clear();
 
         self.client_state = "done".to_string();
 
@@ -651,12 +679,12 @@ impl HttpStream {
 
         // Finalize response body
         if let Some(ref mut response) = self.flow.response {
-            response.content = self.response_body_buf.buf.clone();
+            response.content = Some(self.response_body_buf.buf.clone());
             self.response_body_buf.clear();
         }
 
         self.server_state = "done".to_string();
-        self.flow.live = false;
+        self.flow.flow.modified = true; // Mark as done instead of live flag
 
         // Check for protocol upgrades (WebSocket, etc.)
         if let Some(ref response) = self.flow.response {
@@ -674,7 +702,7 @@ impl HttpStream {
 
     async fn handle_protocol_error(&mut self, message: String) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         error!("HttpStream {} protocol error: {}", self.stream_id, message);
-        self.flow.live = false;
+        self.flow.flow.set_error(message);
 
         Ok(vec![
             Box::new(DropStream {
@@ -703,7 +731,7 @@ impl HttpStream {
 
     fn validate_request(&self, request: &HTTPRequest) -> Result<(), String> {
         // Basic request validation matching Python's validate_request function
-        let scheme = request.url.scheme();
+        let scheme = &request.scheme;
         if scheme != "http" && scheme != "https" && !scheme.is_empty() {
             return Err(format!("Invalid request scheme: {}", scheme));
         }
@@ -715,8 +743,13 @@ impl HttpStream {
 }
 
 impl Layer for HttpStream {
-    async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        HttpStream::handle_event(self, event).await
+    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Convert async HttpStream::handle_event to sync CommandGenerator pattern
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    }
+
+    fn layer_name(&self) -> &'static str {
+        "HttpStream"
     }
 }
 
@@ -756,7 +789,7 @@ impl HttpLayer {
     /// Route event to appropriate child layer or stream
     pub async fn route_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         // Handle start event
-        if event.downcast_ref::<Start>().is_some() {
+        if event.as_any().downcast_ref::<Start>().is_some() {
             debug!("HttpLayer starting in {:?} mode", self.mode);
             return Ok(vec![]);
         }
@@ -784,31 +817,31 @@ impl HttpLayer {
         Ok(vec![])
     }
 
-    fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<&dyn HttpEvent> {
+    fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
         // Try to downcast to each HTTP event type
-        if let Some(e) = event.downcast_ref::<RequestHeaders>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<RequestHeaders>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseHeaders>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<ResponseHeaders>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<RequestData>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<RequestData>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseData>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<ResponseData>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<RequestEndOfMessage>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<RequestEndOfMessage>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseEndOfMessage>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<ResponseEndOfMessage>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<RequestProtocolError>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<RequestProtocolError>() {
+            return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseProtocolError>() {
-            return Some(e);
+        if let Some(e) = event.as_any().downcast_ref::<ResponseProtocolError>() {
+            return Some(Box::new(e.clone()));
         }
 
         None
@@ -816,8 +849,13 @@ impl HttpLayer {
 }
 
 impl Layer for HttpLayer {
-    async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        self.route_event(event).await
+    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Convert async route_event to sync CommandGenerator pattern
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    }
+
+    fn layer_name(&self) -> &'static str {
+        "HttpLayer"
     }
 }
 
@@ -896,14 +934,14 @@ impl Http1Server {
         let mut commands = Vec::new();
 
         match event.as_ref() {
-            _ if event.downcast_ref::<ResponseHeaders>().is_some() => {
-                let resp_headers = event.downcast_ref::<ResponseHeaders>().unwrap();
+            _ if event.as_any().downcast_ref::<ResponseHeaders>().is_some() => {
+                let resp_headers = event.as_any().downcast_ref::<ResponseHeaders>().unwrap();
                 self.response = Some(resp_headers.response.clone());
 
                 // Convert to HTTP/1.1 if needed and assemble response head
                 let mut response = resp_headers.response.clone();
-                if response.version == "HTTP/2" || response.version == "HTTP/3" {
-                    response.version = "HTTP/1.1".to_string();
+                if response.http_version == "HTTP/2" || response.http_version == "HTTP/3" {
+                    response.http_version = "HTTP/1.1".to_string();
                     if response.reason.is_empty() {
                         response.reason = self.get_status_reason(response.status_code);
                     }
@@ -911,12 +949,12 @@ impl Http1Server {
 
                 let raw_response = self.assemble_response_head(&response)?;
                 commands.push(Box::new(SendData {
-                    connection: self.context.client_conn.clone(),
+                    connection: self.context.client_conn().clone(),
                     data: raw_response,
                 }) as Box<dyn Command>);
             }
-            _ if event.downcast_ref::<ResponseData>().is_some() => {
-                let resp_data = event.downcast_ref::<ResponseData>().unwrap();
+            _ if event.as_any().downcast_ref::<ResponseData>().is_some() => {
+                let resp_data = event.as_any().downcast_ref::<ResponseData>().unwrap();
                 if let Some(ref response) = self.response {
                     let raw_data = if self.is_chunked_encoding(response) {
                         self.encode_chunk(&resp_data.data)
@@ -926,18 +964,18 @@ impl Http1Server {
 
                     if !raw_data.is_empty() {
                         commands.push(Box::new(SendData {
-                            connection: self.context.client_conn.clone(),
+                            connection: self.context.client_conn().clone(),
                             data: raw_data,
                         }) as Box<dyn Command>);
                     }
                 }
             }
-            _ if event.downcast_ref::<ResponseEndOfMessage>().is_some() => {
+            _ if event.as_any().downcast_ref::<ResponseEndOfMessage>().is_some() => {
                 if let Some(ref request) = self.request {
                     if let Some(ref response) = self.response {
                         if request.method.to_uppercase() != "HEAD" && self.is_chunked_encoding(response) {
                             commands.push(Box::new(SendData {
-                                connection: self.context.client_conn.clone(),
+                                connection: self.context.client_conn().clone(),
                                 data: b"0\r\n\r\n".to_vec(),
                             }) as Box<dyn Command>);
                         }
@@ -945,23 +983,23 @@ impl Http1Server {
                 }
                 commands.extend(self.mark_done(false, true).await?);
             }
-            _ if event.downcast_ref::<ResponseProtocolError>().is_some() => {
-                let resp_error = event.downcast_ref::<ResponseProtocolError>().unwrap();
+            _ if event.as_any().downcast_ref::<ResponseProtocolError>().is_some() => {
+                let resp_error = event.as_any().downcast_ref::<ResponseProtocolError>().unwrap();
                 if let Some(status) = resp_error.code.http_status_code() {
                     if self.response.is_none() {
                         let error_response = self.make_error_response(status, &resp_error.message)?;
                         commands.push(Box::new(SendData {
-                            connection: self.context.client_conn.clone(),
+                            connection: self.context.client_conn().clone(),
                             data: error_response,
                         }) as Box<dyn Command>);
                     }
                 }
                 commands.push(Box::new(CloseConnection {
-                    connection: self.context.client_conn.clone(),
+                    connection: self.context.client_conn().clone(),
                 }) as Box<dyn Command>);
             }
             _ => {
-                return Err(ProxyError::Protocol(format!("Unexpected HTTP event: {:?}",
+                return Err(ProxyError::Proxy(format!("Unexpected HTTP event: {:?}",
                     std::any::type_name_of_val(event.as_ref()))));
             }
         }
@@ -971,7 +1009,7 @@ impl Http1Server {
 
     /// Read HTTP headers from buffer, matching Python's read_headers method
     pub async fn read_headers(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        if let Some(data_received) = event.downcast_ref::<DataReceived>() {
+        if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             self.receive_buffer.extend(&data_received.data);
 
             if let Some(request_lines) = self.receive_buffer.maybe_extract_lines() {
@@ -998,17 +1036,17 @@ impl Http1Server {
                         let error_response = self.make_error_response(400, &e)?;
                         return Ok(vec![
                             Box::new(SendData {
-                                connection: self.context.client_conn.clone(),
+                                connection: self.context.client_conn().clone(),
                                 data: error_response,
                             }),
                             Box::new(CloseConnection {
-                                connection: self.context.client_conn.clone(),
+                                connection: self.context.client_conn().clone(),
                             }),
                         ]);
                     }
                 }
             }
-        } else if let Some(_connection_closed) = event.downcast_ref::<ConnectionClosed>() {
+        } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             let buf_content = self.receive_buffer.buf.clone();
             if !buf_content.iter().all(|&b| b.is_ascii_whitespace()) {
                 debug!("Client closed connection before completing request headers: {:?}",
@@ -1016,7 +1054,7 @@ impl Http1Server {
             }
             return Ok(vec![
                 Box::new(CloseConnection {
-                    connection: self.context.client_conn.clone(),
+                    connection: self.context.client_conn().clone(),
                 })
             ]);
         }
@@ -1045,8 +1083,8 @@ impl Http1Server {
         let url = url::Url::parse(&format!("http://example.com{}", url_str))
             .map_err(|e| format!("Invalid URL: {}", e))?;
 
-        // Parse headers
-        let mut headers = std::collections::HashMap::new();
+        // Parse headers into a Vec<(String, String)>
+        let mut parsed_headers = Vec::new();
         for line in &lines[1..] {
             if line.is_empty() {
                 break;
@@ -1056,30 +1094,33 @@ impl Http1Server {
             if let Some(colon_pos) = header_line.find(':') {
                 let name = header_line[..colon_pos].trim().to_string();
                 let value = header_line[colon_pos + 1..].trim().to_string();
-                headers.insert(name.to_lowercase(), value);
+                parsed_headers.push((name, value));
             }
         }
 
-        Ok(HTTPRequest {
-            method,
-            url,
-            version,
-            headers,
-            content: Vec::new(),
-            timestamp_start: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64(),
-            timestamp_end: None,
-        })
+        // Get host/port from URL or Host header
+        let host = url.host_str().unwrap_or("").to_string();
+        let port = url.port().unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+        let scheme = url.scheme().to_string();
+        let path = url.path().to_string();
+
+        let mut request = crate::flow::HTTPRequest::new(method, scheme, host, port, path);
+        request.http_version = version;
+        request.headers = parsed_headers;
+        request.timestamp_start = Some(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64());
+
+        Ok(request)
     }
 
     /// Calculate expected body size based on headers
     fn calculate_expected_body_size(&self, request: &HTTPRequest) -> Result<usize, ProxyError> {
-        if let Some(content_length) = request.headers.get("content-length") {
+        if let Some(content_length) = request.get_header("content-length") {
             content_length.parse()
-                .map_err(|_| ProxyError::Protocol("Invalid Content-Length header".to_string()))
-        } else if request.headers.get("transfer-encoding")
+                .map_err(|_| ProxyError::Proxy("Invalid Content-Length header".to_string()))
+        } else if request.get_header("transfer-encoding")
             .map(|te| te.to_lowercase().contains("chunked"))
             .unwrap_or(false) {
             Ok(usize::MAX) // Chunked encoding
@@ -1108,7 +1149,7 @@ impl Http1Server {
                     self.state = Http1ServerState::Done;
                     return Ok(vec![
                         Box::new(CloseConnection {
-                            connection: self.context.client_conn.clone(),
+                            connection: self.context.client_conn().clone(),
                         })
                     ]);
                 }
@@ -1137,15 +1178,15 @@ impl Http1Server {
 
     fn should_close_connection(&self, request: &HTTPRequest, response: &HTTPResponse) -> bool {
         // Check for Connection: close header
-        request.headers.get("connection")
+        request.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("close"))
             .unwrap_or(false) ||
-        response.headers.get("connection")
+        response.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("close"))
             .unwrap_or(false) ||
         // HTTP/1.0 defaults to close unless Keep-Alive is specified
-        (request.version == "HTTP/1.0" &&
-         !request.headers.get("connection")
+        (request.http_version == "HTTP/1.0" &&
+         !request.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("keep-alive"))
             .unwrap_or(false))
     }
@@ -1158,7 +1199,7 @@ impl Http1Server {
 
     fn assemble_response_head(&self, response: &HTTPResponse) -> Result<Vec<u8>, ProxyError> {
         let mut result = format!("{} {} {}\r\n",
-            response.version, response.status_code, response.reason);
+            response.http_version, response.status_code, response.reason);
 
         for (name, value) in &response.headers {
             result.push_str(&format!("{}: {}\r\n", name, value));
@@ -1169,7 +1210,7 @@ impl Http1Server {
     }
 
     fn is_chunked_encoding(&self, response: &HTTPResponse) -> bool {
-        response.headers.get("transfer-encoding")
+        response.get_header("transfer-encoding")
             .map(|te| te.to_lowercase().contains("chunked"))
             .unwrap_or(false)
     }
@@ -1251,7 +1292,7 @@ impl Layer for Http1Server {
 impl Http1Server {
     /// Read HTTP request body, matching Python's read_body method
     async fn read_body(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        if let Some(data_received) = event.downcast_ref::<DataReceived>() {
+        if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if let Some(ref request) = self.request {
                 self.receive_buffer.extend(&data_received.data);
 
@@ -1269,7 +1310,7 @@ impl Http1Server {
                     return self.read_content_length_body(expected_body_size).await;
                 }
             }
-        } else if let Some(_connection_closed) = event.downcast_ref::<ConnectionClosed>() {
+        } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             // Handle connection closed during body reading
             if let Some(ref request) = self.request {
                 let expected_body_size = self.calculate_expected_body_size(request)?;
@@ -1293,7 +1334,7 @@ impl Http1Server {
             }
             return Ok(vec![
                 Box::new(CloseConnection {
-                    connection: self.context.client_conn.clone(),
+                    connection: self.context.client_conn().clone(),
                 })
             ]);
         }
@@ -1404,16 +1445,16 @@ impl Http1Server {
 
     fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
         // Try to downcast to each HTTP event type
-        if let Some(e) = event.downcast_ref::<ResponseHeaders>() {
+        if let Some(e) = event.as_any().downcast_ref::<ResponseHeaders>() {
             return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseData>() {
+        if let Some(e) = event.as_any().downcast_ref::<ResponseData>() {
             return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseEndOfMessage>() {
+        if let Some(e) = event.as_any().downcast_ref::<ResponseEndOfMessage>() {
             return Some(Box::new(e.clone()));
         }
-        if let Some(e) = event.downcast_ref::<ResponseProtocolError>() {
+        if let Some(e) = event.as_any().downcast_ref::<ResponseProtocolError>() {
             return Some(Box::new(e.clone()));
         }
 
@@ -1464,49 +1505,47 @@ impl Http1Client {
         let mut commands = Vec::new();
 
         // Handle RequestProtocolError separately
-        if let Some(req_error) = event.downcast_ref::<RequestProtocolError>() {
+        if let Some(req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
             commands.push(Box::new(CloseConnection {
-                connection: self.context.server_conn.clone(),
+                connection: self.context.server_conn().cloned().unwrap_or_default(),
             }) as Box<dyn Command>);
             return Ok(commands);
         }
 
         // Set stream ID if this is the first event
         if self.stream_id.is_none() {
-            if let Some(req_headers) = event.downcast_ref::<RequestHeaders>() {
+            if let Some(req_headers) = event.as_any().downcast_ref::<RequestHeaders>() {
                 self.stream_id = Some(req_headers.stream_id);
                 self.request = Some(req_headers.request.clone());
             } else {
-                return Err(ProxyError::Protocol("Expected RequestHeaders as first event".to_string()));
+                return Err(ProxyError::Proxy("Expected RequestHeaders as first event".to_string()));
             }
         }
 
         // Verify stream ID matches
         if Some(event.stream_id()) != self.stream_id {
-            return Err(ProxyError::Protocol("Stream ID mismatch".to_string()));
+            return Err(ProxyError::Proxy("Stream ID mismatch".to_string()));
         }
 
         match event.as_ref() {
-            _ if event.downcast_ref::<RequestHeaders>().is_some() => {
-                let req_headers = event.downcast_ref::<RequestHeaders>().unwrap();
+            _ if event.as_any().downcast_ref::<RequestHeaders>().is_some() => {
+                let req_headers = event.as_any().downcast_ref::<RequestHeaders>().unwrap();
                 let mut request = req_headers.request.clone();
 
                 // Convert HTTP/2 or HTTP/3 to HTTP/1.1 if needed
-                if request.version == "HTTP/2" || request.version == "HTTP/3" {
-                    request.version = "HTTP/1.1".to_string();
+                if request.http_version == "HTTP/2" || request.http_version == "HTTP/3" {
+                    request.http_version = "HTTP/1.1".to_string();
 
                     // Add Host header if missing but authority is present
-                    if !request.headers.contains_key("host") {
-                        if let Some(authority) = request.url.host_str() {
-                            let port = request.url.port().unwrap_or(if request.url.scheme() == "https" { 443 } else { 80 });
-                            let host_value = if (port == 80 && request.url.scheme() == "http") ||
-                                               (port == 443 && request.url.scheme() == "https") {
-                                authority.to_string()
-                            } else {
-                                format!("{}:{}", authority, port)
-                            };
-                            request.headers.insert("host".to_string(), host_value);
-                        }
+                    // Note: HTTPRequest has separate host/port/scheme fields, not a URL object
+                    if request.get_header("host").is_none() && !request.host.is_empty() {
+                        let host_value = if (request.port == 80 && request.scheme == "http") ||
+                                           (request.port == 443 && request.scheme == "https") {
+                            request.host.clone()
+                        } else {
+                            format!("{}:{}", request.host, request.port)
+                        };
+                        request.set_header("host".to_string(), host_value);
                     }
 
                     // Merge multiple Cookie headers for HTTP/1.1 compatibility
@@ -1515,19 +1554,19 @@ impl Http1Client {
                         .map(|(_, v)| v.clone())
                         .collect();
                     if cookie_values.len() > 1 {
-                        request.headers.retain(|k, _| k.to_lowercase() != "cookie");
-                        request.headers.insert("cookie".to_string(), cookie_values.join("; "));
+                        request.headers.retain(|(k, _)| k.to_lowercase() != "cookie");
+                        request.headers.push(("cookie".to_string(), cookie_values.join("; ")));
                     }
                 }
 
                 let raw_request = self.assemble_request_head(&request)?;
                 commands.push(Box::new(SendData {
-                    connection: self.context.server_conn.clone(),
+                    connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: raw_request,
                 }) as Box<dyn Command>);
             }
-            _ if event.downcast_ref::<RequestData>().is_some() => {
-                let req_data = event.downcast_ref::<RequestData>().unwrap();
+            _ if event.as_any().downcast_ref::<RequestData>().is_some() => {
+                let req_data = event.as_any().downcast_ref::<RequestData>().unwrap();
                 if let Some(ref request) = self.request {
                     let raw_data = if self.is_chunked_encoding_request(request) {
                         self.encode_chunk(&req_data.data)
@@ -1537,18 +1576,18 @@ impl Http1Client {
 
                     if !raw_data.is_empty() {
                         commands.push(Box::new(SendData {
-                            connection: self.context.server_conn.clone(),
+                            connection: self.context.server_conn().cloned().unwrap_or_default(),
                             data: raw_data,
                         }) as Box<dyn Command>);
                     }
                 }
             }
-            _ if event.downcast_ref::<RequestEndOfMessage>().is_some() => {
+            _ if event.as_any().downcast_ref::<RequestEndOfMessage>().is_some() => {
                 if let Some(ref request) = self.request {
                     if self.is_chunked_encoding_request(request) {
                         // Send final chunk
                         commands.push(Box::new(SendData {
-                            connection: self.context.server_conn.clone(),
+                            connection: self.context.server_conn().cloned().unwrap_or_default(),
                             data: b"0\r\n\r\n".to_vec(),
                         }) as Box<dyn Command>);
                     } else {
@@ -1561,7 +1600,7 @@ impl Http1Client {
 
                         if expected_body_size == usize::MAX - 1 { // HTTP/1.0 read-until-EOF
                             commands.push(Box::new(CloseConnection {
-                                connection: self.context.server_conn.clone(),
+                                connection: self.context.server_conn().cloned().unwrap_or_default(),
                             }) as Box<dyn Command>);
                         }
                     }
@@ -1569,7 +1608,7 @@ impl Http1Client {
                 commands.extend(self.mark_done(true, false).await?);
             }
             _ => {
-                return Err(ProxyError::Protocol(format!("Unexpected HTTP event: {:?}",
+                return Err(ProxyError::Proxy(format!("Unexpected HTTP event: {:?}",
                     std::any::type_name_of_val(event.as_ref()))));
             }
         }
@@ -1579,13 +1618,13 @@ impl Http1Client {
 
     /// Read HTTP response headers, matching Python's read_headers method
     pub async fn read_headers(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        if let Some(data_received) = event.downcast_ref::<DataReceived>() {
+        if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if self.request.is_none() {
                 // Unexpected data from server
                 warn!("Unexpected data from server: {:?}", String::from_utf8_lossy(&data_received.data));
                 return Ok(vec![
                     Box::new(CloseConnection {
-                        connection: self.context.server_conn.clone(),
+                        connection: self.context.server_conn().cloned().unwrap_or_default(),
                     })
                 ]);
             }
@@ -1619,7 +1658,7 @@ impl Http1Client {
                     Err(e) => {
                         return Ok(vec![
                             Box::new(CloseConnection {
-                                connection: self.context.server_conn.clone(),
+                                connection: self.context.server_conn().cloned().unwrap_or_default(),
                             }),
                             Box::new(ReceiveHttp {
                                 event: Box::new(ResponseProtocolError {
@@ -1632,13 +1671,15 @@ impl Http1Client {
                     }
                 }
             }
-        } else if let Some(_connection_closed) = event.downcast_ref::<ConnectionClosed>() {
-            if self.context.server_conn.state != ConnectionState::Closed {
-                return Ok(vec![
-                    Box::new(CloseConnection {
-                        connection: self.context.server_conn.clone(),
-                    })
-                ]);
+        } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
+            if let Some(server_conn) = self.context.server_conn() {
+                if server_conn.state != ConnectionState::CLOSED {
+                    return Ok(vec![
+                        Box::new(CloseConnection {
+                            connection: self.context.server_conn().cloned().unwrap_or_default(),
+                        })
+                    ]);
+                }
             }
 
             if let Some(stream_id) = self.stream_id {
@@ -1672,7 +1713,7 @@ impl Http1Client {
 
     /// Read HTTP response body, matching Python's read_body method
     pub async fn read_body(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        if let Some(data_received) = event.downcast_ref::<DataReceived>() {
+        if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
                 self.receive_buffer.extend(&data_received.data);
 
@@ -1693,7 +1734,7 @@ impl Http1Client {
                     return self.read_content_length_response_body(expected_body_size).await;
                 }
             }
-        } else if let Some(_connection_closed) = event.downcast_ref::<ConnectionClosed>() {
+        } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             // Handle connection closed during response body reading
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
                 let expected_body_size = self.calculate_expected_response_body_size(request, response)?;
@@ -1743,7 +1784,7 @@ impl Http1Client {
                     Err(_) => {
                         return Ok(vec![
                             Box::new(CloseConnection {
-                                connection: self.context.server_conn.clone(),
+                                connection: self.context.server_conn().cloned().unwrap_or_default(),
                             }),
                             Box::new(ReceiveHttp {
                                 event: Box::new(ResponseProtocolError {
@@ -1866,7 +1907,7 @@ impl Http1Client {
         };
 
         // Parse headers
-        let mut headers = std::collections::HashMap::new();
+        let mut headers = Vec::new();
         for line in &lines[1..] {
             if line.is_empty() {
                 break;
@@ -1876,22 +1917,18 @@ impl Http1Client {
             if let Some(colon_pos) = header_line.find(':') {
                 let name = header_line[..colon_pos].trim().to_lowercase();
                 let value = header_line[colon_pos + 1..].trim().to_string();
-                headers.insert(name, value);
+                headers.push((name, value));
             }
         }
 
-        Ok(HTTPResponse {
-            version,
-            status_code,
-            reason,
-            headers,
-            content: Vec::new(),
-            timestamp_start: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64(),
-            timestamp_end: None,
-        })
+        let mut response = HTTPResponse::new(status_code, reason);
+        response.http_version = version;
+        response.headers = headers;
+        response.timestamp_start = Some(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64());
+        Ok(response)
     }
 
     /// Calculate expected response body size
@@ -1912,20 +1949,20 @@ impl Http1Client {
         }
 
         // Check Transfer-Encoding first
-        if let Some(te) = response.headers.get("transfer-encoding") {
+        if let Some(te) = response.get_header("transfer-encoding") {
             if te.to_lowercase().contains("chunked") {
                 return Ok(usize::MAX); // Chunked encoding
             }
         }
 
         // Check Content-Length
-        if let Some(content_length) = response.headers.get("content-length") {
+        if let Some(content_length) = response.get_header("content-length") {
             return content_length.parse()
-                .map_err(|_| ProxyError::Protocol("Invalid Content-Length header".to_string()));
+                .map_err(|_| ProxyError::Proxy("Invalid Content-Length header".to_string()));
         }
 
         // HTTP/1.0 without Content-Length means read until EOF
-        if response.version == "HTTP/1.0" {
+        if response.http_version == "HTTP/1.0" {
             Ok(usize::MAX - 1) // Read-until-EOF semantics
         } else {
             Ok(0) // No body
@@ -1935,7 +1972,7 @@ impl Http1Client {
     /// Assemble HTTP request head
     fn assemble_request_head(&self, request: &HTTPRequest) -> Result<Vec<u8>, ProxyError> {
         let mut result = format!("{} {} {}\r\n",
-            request.method, request.url.path(), request.version);
+            request.method, request.path, request.http_version);
 
         for (name, value) in &request.headers {
             result.push_str(&format!("{}: {}\r\n", name, value));
@@ -1946,7 +1983,7 @@ impl Http1Client {
     }
 
     fn is_chunked_encoding_request(&self, request: &HTTPRequest) -> bool {
-        request.headers.get("transfer-encoding")
+        request.get_header("transfer-encoding")
             .map(|te| te.to_lowercase().contains("chunked"))
             .unwrap_or(false)
     }
@@ -1992,13 +2029,13 @@ impl Http1Client {
                 let connection_done = read_until_eof_semantics ||
                     self.should_close_connection(request, response) ||
                     // If we proxy HTTP/2 to HTTP/1, we only use upstream connections for one request
-                    ((request.version == "HTTP/2" || request.version == "HTTP/3"));
+                    ((request.http_version == "HTTP/2" || request.http_version == "HTTP/3"));
 
                 if connection_done {
                     self.state = Http1ClientState::Done;
                     return Ok(vec![
                         Box::new(CloseConnection {
-                            connection: self.context.server_conn.clone(),
+                            connection: self.context.server_conn().cloned().unwrap_or_default(),
                         })
                     ]);
                 }
@@ -2015,7 +2052,7 @@ impl Http1Client {
             // Process any buffered data
             if !self.receive_buffer.is_empty() {
                 return self.read_headers(Box::new(DataReceived {
-                    connection: self.context.server_conn.clone(),
+                    connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: vec![],
                 })).await;
             }
@@ -2035,15 +2072,15 @@ impl Http1Client {
 
     fn should_close_connection(&self, request: &HTTPRequest, response: &HTTPResponse) -> bool {
         // Check for Connection: close header
-        request.headers.get("connection")
+        request.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("close"))
             .unwrap_or(false) ||
-        response.headers.get("connection")
+        response.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("close"))
             .unwrap_or(false) ||
         // HTTP/1.0 defaults to close unless Keep-Alive is specified
-        (request.version == "HTTP/1.0" &&
-         !request.headers.get("connection")
+        (request.http_version == "HTTP/1.0" &&
+         !request.get_header("connection")
             .map(|conn| conn.to_lowercase().contains("keep-alive"))
             .unwrap_or(false))
     }
@@ -2065,7 +2102,7 @@ impl Http1Client {
 
             if !already_received.is_empty() {
                 let passthrough_event = Box::new(DataReceived {
-                    connection: self.context.server_conn.clone(),
+                    connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: already_received.to_vec(),
                 });
                 return self.handle_passthrough(passthrough_event).await;
@@ -2076,7 +2113,7 @@ impl Http1Client {
     }
 
     async fn handle_passthrough(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        if let Some(data_received) = event.downcast_ref::<DataReceived>() {
+        if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             Ok(vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseData {
@@ -2085,7 +2122,7 @@ impl Http1Client {
                     }),
                 }) as Box<dyn Command>
             ])
-        } else if let Some(_connection_closed) = event.downcast_ref::<ConnectionClosed>() {
+        } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             Ok(vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseEndOfMessage {
@@ -2122,17 +2159,36 @@ impl Http1Connection for Http1Client {
 }
 
 impl Layer for Http1Client {
-    async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Convert async handle_event to sync CommandGenerator pattern
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    }
+
+    fn layer_name(&self) -> &'static str {
+        "Http1Client"
+    }
+}
+
+impl Http1Client {
+    /// Try to extract an HTTP event from a generic event
+    /// This is used in the Wait state to handle incoming HTTP events
+    fn try_extract_http_event(&self, _event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
+        // In the Wait state, we don't expect any HTTP events - the client
+        // is waiting for the next request/response cycle
+        None
+    }
+
+    async fn async_handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         debug!("Http1Client handling event in state {:?}: {:?}",
                self.state, std::any::type_name_of_val(&*event));
 
         match self.state {
             Http1ClientState::Start => {
-                if event.downcast_ref::<Start>().is_some() {
+                if event.as_any().downcast_ref::<Start>().is_some() {
                     self.state = Http1ClientState::ReadHeaders;
                     Ok(vec![])
                 } else {
-                    Err(ProxyError::Protocol("Expected Start event".to_string()))
+                    Err(ProxyError::Proxy("Expected Start event".to_string()))
                 }
             }
             Http1ClientState::ReadHeaders => {
@@ -2161,7 +2217,6 @@ impl Layer for Http1Client {
             }
         }
     }
-
 }
 
 /// Command to receive HTTP event, matching Python's ReceiveHttp
@@ -2171,8 +2226,16 @@ pub struct ReceiveHttp {
 }
 
 impl Command for ReceiveHttp {
+    fn command_name(&self) -> &'static str {
+        "ReceiveHttp"
+    }
+
     fn is_blocking(&self) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -2267,6 +2330,12 @@ pub struct BufferedH2Connection {
     stream_trailers: HashMap<u32, Vec<(Bytes, Bytes)>>,
     max_frame_size: u32,
     initial_window_size: u32,
+    /// Number of outbound streams currently open
+    pub open_outbound_streams: u32,
+    /// Next available stream ID for client-initiated streams
+    next_stream_id: u32,
+    /// Remote peer settings
+    remote_max_concurrent_streams: u32,
 }
 
 /// Data to be sent on an HTTP/2 stream
@@ -2276,6 +2345,12 @@ pub struct SendH2Data {
     pub end_stream: bool,
 }
 
+/// Remote settings from HTTP/2 peer
+#[derive(Debug, Clone)]
+pub struct RemoteSettings {
+    pub max_concurrent_streams: u32,
+}
+
 impl BufferedH2Connection {
     pub fn new() -> Self {
         Self {
@@ -2283,7 +2358,25 @@ impl BufferedH2Connection {
             stream_trailers: HashMap::new(),
             max_frame_size: 2_u32.pow(17), // 128KB, matching Python
             initial_window_size: 2_u32.pow(31) - 1, // Max window size, matching Python
+            open_outbound_streams: 0,
+            next_stream_id: 1, // Client uses odd stream IDs
+            remote_max_concurrent_streams: 100, // Default max concurrent streams
         }
+    }
+
+    /// Get remote settings
+    pub fn remote_settings(&self) -> RemoteSettings {
+        RemoteSettings {
+            max_concurrent_streams: self.remote_max_concurrent_streams,
+        }
+    }
+
+    /// Get next available stream ID for a new outbound stream
+    pub fn get_next_available_stream_id(&mut self) -> u32 {
+        let id = self.next_stream_id;
+        self.next_stream_id += 2; // Increment by 2 to maintain odd/even parity
+        self.open_outbound_streams += 1;
+        id
     }
 
     /// Receive data and return events, matching Python's receive_data method
@@ -2392,14 +2485,13 @@ impl Http2Connection {
     }
 
     /// Handle HTTP/2 events, matching Python's handle_h2_event method
-    /// Returns CommandGenerator<bool> where true means stop further processing
-    pub fn handle_h2_event(&mut self, event: H2Event) -> Box<dyn crate::proxy::layer::CommandGenerator<bool>> {
+    pub fn handle_h2_event(&mut self, event: H2Event) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         match event {
             H2Event::DataReceived { stream_id, data, end_stream } => {
-                self.handle_data_received(stream_id, data, end_stream)
+                self.handle_data_received_simple(stream_id, data, end_stream)
             }
             H2Event::HeadersReceived { stream_id, headers, end_stream } => {
-                self.handle_headers_received(stream_id, headers, end_stream)
+                self.handle_headers_received_simple(stream_id, headers, end_stream)
             }
             H2Event::StreamReset { stream_id, error_code } => {
                 self.handle_stream_reset(stream_id, error_code)
@@ -2417,15 +2509,44 @@ impl Http2Connection {
                 self.handle_ping(ack, data)
             }
             H2Event::ProtocolError { message } => {
-                self.handle_protocol_error_event(message)
+                self.protocol_error_generator(message)
             }
             H2Event::ConnectionTerminated { error_code, last_stream_id } => {
-                self.handle_connection_terminated(error_code, last_stream_id)
+                self.handle_go_away(error_code, last_stream_id)
             }
         }
     }
 
-    fn handle_data_received(&mut self, stream_id: u32, data: Bytes, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<bool>> {
+    /// Simple data received handler returning () generator
+    fn handle_data_received_simple(&mut self, stream_id: u32, data: Bytes, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Implement properly
+        Box::new(SimpleCommandGenerator::new(vec![]))
+    }
+
+    /// Simple headers received handler returning () generator
+    fn handle_headers_received_simple(&mut self, stream_id: u32, headers: Vec<(Bytes, Bytes)>, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Implement properly
+        Box::new(SimpleCommandGenerator::new(vec![]))
+    }
+
+    /// Protocol error handler that returns a CommandGenerator<()>
+    fn protocol_error_generator(&mut self, message: String) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        warn!("HTTP/2 protocol error: {}", message);
+
+        let commands = vec![
+            Box::new(Log {
+                message: format!("HTTP/2 protocol error: {}", message),
+                level: LogLevel::Error,
+            }) as Box<dyn Command>,
+            Box::new(CloseConnection {
+                connection: (*self.conn).clone(),
+            }) as Box<dyn Command>,
+        ];
+
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::new(commands))
+    }
+
+    fn handle_data_received(&mut self, stream_id: u32, data: Bytes, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         let stream_id = stream_id as StreamId;
 
         // Check if stream exists
@@ -2447,7 +2568,7 @@ impl Http2Connection {
         let is_empty_eos_data_frame = end_stream && data.is_empty();
         if is_empty_eos_data_frame {
             // TODO: Acknowledge received data for flow control
-            return Box::new(crate::proxy::layer::BooleanCommandGenerator::with_result(false));
+            return Box::new(crate::proxy::layer::SimpleCommandGenerator::empty());
         }
 
         // Send data to stream
@@ -2460,10 +2581,10 @@ impl Http2Connection {
             }) as Box<dyn Command>
         ];
 
-        Box::new(crate::proxy::layer::BooleanCommandGenerator::new(commands, false))
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::new(commands))
     }
 
-    fn handle_headers_received(&mut self, stream_id: u32, headers: Vec<(Bytes, Bytes)>, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<bool>> {
+    fn handle_headers_received(&mut self, stream_id: u32, headers: Vec<(Bytes, Bytes)>, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         let stream_id = stream_id as StreamId;
 
         // Parse headers into pseudo-headers and regular headers
@@ -2496,7 +2617,7 @@ impl Http2Connection {
             }) as Box<dyn Command>
         ];
 
-        Box::new(crate::proxy::layer::BooleanCommandGenerator::new(commands, false))
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::new(commands))
     }
 
     fn handle_stream_reset(&mut self, stream_id: u32, error_code: u32) -> Box<dyn CommandGenerator<()>> {
@@ -2554,7 +2675,7 @@ impl Http2Connection {
         }
 
         commands.push(Box::new(CloseConnection {
-            connection: self.conn.clone(),
+            connection: (*self.conn).clone(),
         }) as Box<dyn Command>);
 
         Box::new(SimpleCommandGenerator::new(commands))
@@ -2577,20 +2698,20 @@ impl Http2Connection {
 
         for (name_bytes, value_bytes) in headers {
             let name_str = std::str::from_utf8(&name_bytes)
-                .map_err(|_| ProxyError::Protocol("Invalid header name encoding".to_string()))?;
+                .map_err(|_| ProxyError::Proxy("Invalid header name encoding".to_string()))?;
 
             if name_str.starts_with(':') {
                 if pseudo_headers.contains_key(name_str) {
-                    return Err(ProxyError::Protocol(format!("Duplicate HTTP/2 pseudo header: {}", name_str)));
+                    return Err(ProxyError::Proxy(format!("Duplicate HTTP/2 pseudo header: {}", name_str)));
                 }
                 let value_str = std::str::from_utf8(&value_bytes)
-                    .map_err(|_| ProxyError::Protocol("Invalid pseudo header value encoding".to_string()))?;
+                    .map_err(|_| ProxyError::Proxy("Invalid pseudo header value encoding".to_string()))?;
                 pseudo_headers.insert(name_str.to_string(), value_str.to_string());
             } else {
                 let name = http::HeaderName::from_bytes(&name_bytes)
-                    .map_err(|_| ProxyError::Protocol(format!("Invalid header name: {}", name_str)))?;
+                    .map_err(|_| ProxyError::Proxy(format!("Invalid header name: {}", name_str)))?;
                 let value = http::HeaderValue::from_bytes(&value_bytes)
-                    .map_err(|_| ProxyError::Protocol("Invalid header value".to_string()))?;
+                    .map_err(|_| ProxyError::Proxy("Invalid header value".to_string()))?;
                 header_map.insert(name, value);
             }
         }
@@ -2600,20 +2721,20 @@ impl Http2Connection {
 
     fn create_request_from_headers(&self, pseudo_headers: HashMap<String, String>, headers: http::HeaderMap) -> Result<HTTPRequest, ProxyError> {
         let method = pseudo_headers.get(":method")
-            .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :method".to_string()))?;
+            .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :method".to_string()))?;
         let scheme = pseudo_headers.get(":scheme")
-            .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :scheme".to_string()))?;
+            .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :scheme".to_string()))?;
         let path = pseudo_headers.get(":path")
-            .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :path".to_string()))?;
+            .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :path".to_string()))?;
         let authority = pseudo_headers.get(":authority");
 
         if !pseudo_headers.is_empty() {
-            return Err(ProxyError::Protocol(format!("Unknown pseudo headers: {:?}", pseudo_headers.keys())));
+            return Err(ProxyError::Proxy(format!("Unknown pseudo headers: {:?}", pseudo_headers.keys())));
         }
 
         let (host, port) = if let Some(auth) = authority {
             parse_authority(auth, true)
-                .map_err(|e| ProxyError::Protocol(format!("Invalid authority: {}", e)))?
+                .map_err(|e| ProxyError::Proxy(format!("Invalid authority: {}", e)))?
         } else {
             ("".to_string(), 0)
         };
@@ -2628,31 +2749,32 @@ impl Http2Connection {
         };
 
         let url = url::Url::parse(&url_str)
-            .map_err(|e| ProxyError::Protocol(format!("Invalid URL: {}", e)))?;
+            .map_err(|e| ProxyError::Proxy(format!("Invalid URL: {}", e)))?;
 
         // Convert headers
-        let mut header_map = std::collections::HashMap::new();
+        let mut header_vec = Vec::new();
         for (name, value) in headers.iter() {
             if !name.as_str().starts_with(':') {
-                header_map.insert(
-                    name.as_str().to_lowercase(),
-                    value.to_str().map_err(|_| ProxyError::Protocol("Invalid header value".to_string()))?.to_string()
-                );
+                if let Ok(v) = value.to_str() {
+                    header_vec.push((name.as_str().to_lowercase(), v.to_string()));
+                }
             }
         }
 
-        Ok(HTTPRequest {
-            method: method.clone(),
-            url,
-            version: "HTTP/2.0".to_string(),
-            headers: header_map,
-            content: Vec::new(),
-            timestamp_start: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64(),
-            timestamp_end: None,
-        })
+        let mut request = HTTPRequest::new(
+            method.clone(),
+            scheme.to_string(),
+            host.clone(),
+            port,
+            path.to_string(),
+        );
+        request.http_version = "HTTP/2.0".to_string();
+        request.headers = header_vec;
+        request.timestamp_start = Some(SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64());
+        Ok(request)
     }
 
     /// Send HTTP/2 frame data, matching Python's data_to_send method
@@ -2674,35 +2796,17 @@ impl Http2Connection {
                 level: LogLevel::Error,
             }),
             Box::new(CloseConnection {
-                connection: self.conn.clone(),
+                connection: (*self.conn).clone(),
             }),
         ])
     }
 
-    /// Protocol error handler that returns a CommandGenerator like Python
-    pub fn protocol_error_generator(&mut self, message: String) -> Box<dyn crate::proxy::layer::CommandGenerator<bool>> {
-        warn!("HTTP/2 protocol error: {}", message);
-
-        let commands = vec![
-            Box::new(Log {
-                message: format!("HTTP/2 protocol error: {}", message),
-                level: LogLevel::Error,
-            }) as Box<dyn Command>,
-            Box::new(CloseConnection {
-                connection: self.conn.clone(),
-            }) as Box<dyn Command>,
-        ];
-
-        // Return true to indicate processing should stop
-        Box::new(crate::proxy::layer::BooleanCommandGenerator::new(commands, true))
-    }
-
     /// Close connection, matching Python's close_connection method
     pub async fn close_connection(&mut self, msg: String) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let mut commands = vec![
+        let mut commands: Vec<Box<dyn Command>> = vec![
             Box::new(CloseConnection {
-                connection: self.conn.clone(),
-            })
+                connection: (*self.conn).clone(),
+            }) as Box<dyn Command>
         ];
 
         // Send protocol errors for all active streams
@@ -2749,20 +2853,21 @@ impl Http2Server {
     pub async fn handle_request_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         let (host, port, method, scheme, authority, path, headers) = parse_h2_request_headers(headers)?;
 
-        let request = http::Request {
+        let mut request = crate::flow::HTTPRequest::new(
+            String::from_utf8_lossy(&method).to_string(),
+            String::from_utf8_lossy(&scheme).to_string(),
             host,
             port,
-            method: method.to_string(),
-            scheme: scheme.to_string(),
-            authority: authority.to_string(),
-            path: path.to_string(),
-            http_version: b"HTTP/2.0".to_vec(),
-            headers,
-            content: None,
-            trailers: None,
-            timestamp_start: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
-            timestamp_end: None,
-        };
+            String::from_utf8_lossy(&path).to_string(),
+        );
+        request.http_version = "HTTP/2.0".to_string();
+        // Convert headers from http::HeaderMap to Vec<(String, String)>
+        for (name, value) in headers.iter() {
+            if let Ok(value_str) = value.to_str() {
+                request.headers.push((name.to_string(), value_str.to_string()));
+            }
+        }
+        request.timestamp_start = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64());
 
         // TODO: Get next available stream ID
         let stream_id = 1;
@@ -2783,9 +2888,9 @@ impl Http2Server {
     /// Handle HTTP/2 informational response, matching Python's handle_h2_event for InformationalResponseReceived
     pub async fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         // HTTP/2 informational responses are swallowed (not forwarded)
-        let pseudo_headers = split_pseudo_headers(headers)?;
+        let (pseudo_headers, _headers_map) = split_pseudo_headers(headers)?;
         let status = pseudo_headers.get(":status")
-            .and_then(|s| s.parse::<u16>().ok())
+            .and_then(|s| String::from_utf8_lossy(s).parse::<u16>().ok())
             .unwrap_or(0);
 
         let reason = match status {
@@ -2814,41 +2919,13 @@ impl Http2Server {
 }
 
 impl Layer for Http2Server {
-    async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        // TODO: Implement event handling matching Python's _handle_event
-        match event.as_ref() {
-            _ if event.downcast_ref::<Start>().is_some() => {
-                // Initiate HTTP/2 connection
-                if let Some(data) = self.base.data_to_send() {
-                    Ok(vec![
-                        Box::new(SendData {
-                            connection: self.base.conn.clone(),
-                            data,
-                        })
-                    ])
-                } else {
-                    Ok(vec![])
-                }
-            }
-            _ if event.downcast_ref::<DataReceived>().is_some() => {
-                // TODO: Parse HTTP/2 frames and handle events
-                Ok(vec![])
-            }
-            _ => {
-                // Handle HTTP events for sending responses
-                if let Some(http_event) = event.downcast_ref::<ResponseHeaders>() {
-                    self.handle_response_headers(http_event.clone()).await
-                } else if let Some(http_event) = event.downcast_ref::<ResponseData>() {
-                    self.handle_response_data(http_event.clone()).await
-                } else if let Some(http_event) = event.downcast_ref::<ResponseEndOfMessage>() {
-                    self.handle_response_end(http_event.clone()).await
-                } else if let Some(http_event) = event.downcast_ref::<ResponseProtocolError>() {
-                    self.handle_response_error(http_event.clone()).await
-                } else {
-                    Ok(vec![])
-                }
-            }
-        }
+    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Convert async handle_event to sync CommandGenerator pattern
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    }
+
+    fn layer_name(&self) -> &'static str {
+        "Http2Server"
     }
 }
 
@@ -2863,8 +2940,8 @@ impl Http2Server {
 
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -2877,8 +2954,8 @@ impl Http2Server {
         // TODO: Send data using h2 library
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -2891,8 +2968,8 @@ impl Http2Server {
         // TODO: End stream using h2 library
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -2903,7 +2980,7 @@ impl Http2Server {
         }
 
         let status = event.code.http_status_code();
-        if self.base.is_open_for_us(event.stream_id) && status.is_some() && !self.base.streams[&event.stream_id] == Http2StreamState::ExpectingHeaders {
+        if self.base.is_open_for_us(event.stream_id) && status.is_some() && self.base.streams[&event.stream_id] != Http2StreamState::ExpectingHeaders {
             // Send error response headers
             // TODO: Send error headers using h2 library
         } else {
@@ -2924,8 +3001,8 @@ impl Http2Server {
 
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -2972,16 +3049,15 @@ impl Http2Client {
     pub async fn handle_response_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         let (status_code, headers) = parse_h2_response_headers(headers)?;
 
-        let response = http::Response {
-            http_version: b"HTTP/2.0".to_vec(),
-            status_code,
-            reason: b"".to_vec(),
-            headers,
-            content: None,
-            trailers: None,
-            timestamp_start: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
-            timestamp_end: None,
-        };
+        let mut response = crate::flow::HTTPResponse::new(status_code, String::new());
+        response.http_version = "HTTP/2.0".to_string();
+        // Convert headers from http::HeaderMap to Vec<(String, String)>
+        for (name, value) in headers.iter() {
+            if let Ok(value_str) = value.to_str() {
+                response.headers.push((name.to_string(), value_str.to_string()));
+            }
+        }
+        response.timestamp_start = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64());
 
         // TODO: Get stream ID from h2 event
         let stream_id = 1;
@@ -3005,9 +3081,9 @@ impl Http2Client {
     /// Handle HTTP/2 informational response, matching Python's handle_h2_event for InformationalResponseReceived
     pub async fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         // HTTP/2 informational responses are swallowed (not forwarded)
-        let pseudo_headers = split_pseudo_headers(headers)?;
+        let (pseudo_headers, _headers_map) = split_pseudo_headers(headers)?;
         let status = pseudo_headers.get(":status")
-            .and_then(|s| s.parse::<u16>().ok())
+            .and_then(|s| String::from_utf8_lossy(s).parse::<u16>().ok())
             .unwrap_or(0);
 
         let reason = match status {
@@ -3043,43 +3119,13 @@ impl Http2Client {
 }
 
 impl Layer for Http2Client {
-    async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        // TODO: Implement event handling matching Python's _handle_event and _handle_event2
-        match event.as_ref() {
-            _ if event.downcast_ref::<Start>().is_some() => {
-                // TODO: Handle ping keepalive setup
-                if let Some(data) = self.base.data_to_send() {
-                    Ok(vec![
-                        Box::new(SendData {
-                            connection: self.base.conn.clone(),
-                            data,
-                        })
-                    ])
-                } else {
-                    Ok(vec![])
-                }
-            }
-            _ if event.downcast_ref::<Wakeup>().is_some() => {
-                // TODO: Handle ping keepalive
-                Ok(vec![])
-            }
-            _ if event.downcast_ref::<DataReceived>().is_some() => {
-                // TODO: Parse HTTP/2 frames and handle events
-                Ok(vec![])
-            }
-            _ => {
-                // Handle HTTP events for sending requests
-                if let Some(http_event) = event.downcast_ref::<RequestHeaders>() {
-                    self.handle_request_headers(http_event.clone()).await
-                } else if let Some(http_event) = event.downcast_ref::<RequestData>() {
-                    self.handle_request_data(http_event.clone()).await
-                } else if let Some(http_event) = event.downcast_ref::<RequestEndOfMessage>() {
-                    self.handle_request_end(http_event.clone()).await
-                } else {
-                    Ok(vec![])
-                }
-            }
-        }
+    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+        // TODO: Convert async handle_event to sync CommandGenerator pattern
+        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    }
+
+    fn layer_name(&self) -> &'static str {
+        "Http2Client"
     }
 }
 
@@ -3109,8 +3155,8 @@ impl Http2Client {
 
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -3123,8 +3169,8 @@ impl Http2Client {
         // TODO: Send data using h2 library
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -3137,8 +3183,8 @@ impl Http2Client {
         // TODO: End stream using h2 library
         Ok(vec![
             Box::new(SendData {
-                connection: self.base.conn.clone(),
-                data: self.base.data_to_send().unwrap_or_default(),
+                connection: (*self.base.conn).clone(),
+                data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
         ])
     }
@@ -3154,7 +3200,7 @@ pub fn normalize_h1_headers(headers: Vec<(Bytes, Bytes)>, is_client: bool) -> Re
     for (name, value) in headers {
         let name_str = String::from_utf8_lossy(&name);
         if name_str.chars().any(|c| !c.is_ascii()) {
-            return Err(ProxyError::Protocol("Header name contains non-ASCII characters".to_string()));
+            return Err(ProxyError::Proxy("Header name contains non-ASCII characters".to_string()));
         }
 
         // Convert to lowercase for HTTP/2
@@ -3239,22 +3285,22 @@ pub fn parse_h2_request_headers(h2_headers: Vec<(Bytes, Bytes)>) -> Result<(Stri
     let (pseudo_headers, headers) = split_pseudo_headers(h2_headers)?;
 
     let method = pseudo_headers.get(":method")
-        .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :method".to_string()))?;
+        .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :method".to_string()))?;
     let scheme = pseudo_headers.get(":scheme")
-        .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :scheme".to_string()))?;
+        .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :scheme".to_string()))?;
     let path = pseudo_headers.get(":path")
-        .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :path".to_string()))?;
+        .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :path".to_string()))?;
     let authority = pseudo_headers.get(":authority")
         .map(|s| s.clone())
         .unwrap_or_else(|| Bytes::new());
 
     if !pseudo_headers.is_empty() {
-        return Err(ProxyError::Protocol(format!("Unknown pseudo headers: {:?}", pseudo_headers.keys())));
+        return Err(ProxyError::Proxy(format!("Unknown pseudo headers: {:?}", pseudo_headers.keys())));
     }
 
     let (host, port) = if !authority.is_empty() {
         parse_authority(&String::from_utf8_lossy(&authority), true)
-            .map_err(|e| ProxyError::Protocol(format!("Invalid authority: {}", e)))?
+            .map_err(|e| ProxyError::Proxy(format!("Invalid authority: {}", e)))?
     } else {
         ("".to_string(), 0)
     };
@@ -3267,13 +3313,9 @@ pub fn parse_h2_response_headers(h2_headers: Vec<(Bytes, Bytes)>) -> Result<(u16
     let (pseudo_headers, headers) = split_pseudo_headers(h2_headers)?;
 
     let status_code = pseudo_headers.get(":status")
-        .ok_or_else(|| ProxyError::Protocol("Required pseudo header is missing: :status".to_string()))?
-        .parse::<u16>()
-        .map_err(|_| ProxyError::Protocol("Invalid status code".to_string()))?;
-
-    if !pseudo_headers.is_empty() {
-        return Err(ProxyError::Protocol(format!("Unknown pseudo headers: {:?}", pseudo_headers.keys())));
-    }
+        .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :status".to_string()))?;
+    let status_code = String::from_utf8_lossy(status_code).parse::<u16>()
+        .map_err(|_| ProxyError::Proxy("Invalid status code".to_string()))?;
 
     Ok((status_code, headers))
 }
@@ -3286,16 +3328,16 @@ pub fn split_pseudo_headers(h2_headers: Vec<(Bytes, Bytes)>) -> Result<(HashMap<
     for (name, value) in h2_headers {
         let name_str = String::from_utf8_lossy(&name);
         if name_str.starts_with(':') {
-            if pseudo_headers.contains_key(&name_str) {
-                return Err(ProxyError::Protocol(format!("Duplicate HTTP/2 pseudo header: {}", name_str)));
+            if pseudo_headers.contains_key(name_str.as_ref()) {
+                return Err(ProxyError::Proxy(format!("Duplicate HTTP/2 pseudo header: {}", name_str)));
             }
-            pseudo_headers.insert(name_str, value);
+            pseudo_headers.insert(name_str.to_string(), value);
         } else {
-            headers.insert(
-                name_str.parse::<http::HeaderName>()
-                    .map_err(|_| ProxyError::Protocol("Invalid header name".to_string()))?,
-                value.to_vec().as_slice()
-            );
+            let header_name = name_str.parse::<http::HeaderName>()
+                .map_err(|_| ProxyError::Proxy("Invalid header name".to_string()))?;
+            let header_value = http::HeaderValue::from_bytes(&value)
+                .map_err(|_| ProxyError::Proxy("Invalid header value".to_string()))?;
+            headers.insert(header_name, header_value);
         }
     }
 
@@ -3355,8 +3397,8 @@ mod tests {
 
         let request = server.parse_request_head(&lines).unwrap();
         assert_eq!(request.method, "GET");
-        assert_eq!(request.version, "HTTP/1.1");
-        assert_eq!(request.headers.get("host"), Some(&"example.com".to_string()));
-        assert_eq!(request.headers.get("user-agent"), Some(&"test".to_string()));
+        assert_eq!(request.http_version, "HTTP/1.1");
+        assert_eq!(request.get_header("host"), Some(&"example.com".to_string()));
+        assert_eq!(request.get_header("user-agent"), Some(&"test".to_string()));
     }
 }

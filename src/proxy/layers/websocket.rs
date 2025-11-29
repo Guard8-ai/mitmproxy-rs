@@ -20,7 +20,8 @@ impl WebSocketLayer {
     pub fn to_tungstenite_message(ws_msg: &WebSocketMessage) -> crate::Result<Message> {
         match ws_msg.message_type {
             WebSocketMessageType::Text => {
-                let text = String::from_utf8(ws_msg.content.clone())?;
+                let text = String::from_utf8(ws_msg.content.clone())
+                    .map_err(|e| crate::Error::Other(format!("Invalid UTF-8 in WebSocket message: {}", e)))?;
                 Ok(Message::Text(text))
             }
             WebSocketMessageType::Binary => Ok(Message::Binary(ws_msg.content.clone())),

@@ -1,17 +1,13 @@
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{Json, Response},
-    Form,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::flow::HTTPFlow;
 use crate::proxy::ProxyServer;
-use crate::{Error, Result};
 
 // Index handler
 pub async fn index() -> &'static str {
@@ -138,9 +134,9 @@ pub struct DumpQuery {
 }
 
 pub async fn dump_flows(
-    Query(query): Query<DumpQuery>,
+    Query(_query): Query<DumpQuery>,
     State(proxy): State<Arc<ProxyServer>>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> std::result::Result<Vec<u8>, StatusCode> {
     let flows = proxy.get_flows().await;
 
     // TODO: Apply filter if provided
@@ -151,19 +147,19 @@ pub async fn dump_flows(
 
 pub async fn load_flows(
     State(proxy): State<Arc<ProxyServer>>,
-    body: Vec<u8>,
-) -> Result<(), StatusCode> {
+    _body: axum::body::Bytes,
+) -> std::result::Result<(), StatusCode> {
     // TODO: Implement flow loading from binary format
     proxy.clear_flows().await;
     Ok(())
 }
 
-pub async fn resume_flows(State(proxy): State<Arc<ProxyServer>>) -> StatusCode {
+pub async fn resume_flows(State(_proxy): State<Arc<ProxyServer>>) -> StatusCode {
     // TODO: Resume all intercepted flows
     StatusCode::OK
 }
 
-pub async fn kill_flows(State(proxy): State<Arc<ProxyServer>>) -> StatusCode {
+pub async fn kill_flows(State(_proxy): State<Arc<ProxyServer>>) -> StatusCode {
     // TODO: Kill all killable flows
     StatusCode::OK
 }
@@ -172,7 +168,7 @@ pub async fn kill_flows(State(proxy): State<Arc<ProxyServer>>) -> StatusCode {
 pub async fn get_flow(
     Path(flow_id): Path<String>,
     State(proxy): State<Arc<ProxyServer>>,
-) -> Result<Json<Value>, StatusCode> {
+) -> std::result::Result<Json<Value>, StatusCode> {
     if let Some(flow) = proxy.get_flow(&flow_id).await {
         Ok(Json(flow.to_json()))
     } else {
@@ -213,7 +209,7 @@ pub async fn update_flow(
     Path(flow_id): Path<String>,
     State(proxy): State<Arc<ProxyServer>>,
     Json(update): Json<UpdateFlowRequest>,
-) -> Result<StatusCode, StatusCode> {
+) -> std::result::Result<StatusCode, StatusCode> {
     let mut flow = proxy
         .get_flow(&flow_id)
         .await
@@ -321,11 +317,12 @@ pub async fn kill_flow(
 pub async fn duplicate_flow(
     Path(flow_id): Path<String>,
     State(proxy): State<Arc<ProxyServer>>,
-) -> Result<String, StatusCode> {
+) -> std::result::Result<String, StatusCode> {
     if let Some(flow) = proxy.get_flow(&flow_id).await {
         let new_flow = flow.copy();
         let new_id = new_flow.flow.id.clone();
         // TODO: Add the new flow to the proxy
+        proxy.add_flow(new_flow).await;
         Ok(new_id)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -363,7 +360,7 @@ pub async fn revert_flow(
 pub async fn get_flow_content(
     Path((flow_id, message)): Path<(String, String)>,
     State(proxy): State<Arc<ProxyServer>>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> std::result::Result<Vec<u8>, StatusCode> {
     let flow = proxy.get_flow(&flow_id).await.ok_or(StatusCode::NOT_FOUND)?;
 
     match message.as_str() {
@@ -382,18 +379,19 @@ pub async fn get_flow_content(
 pub async fn set_flow_content(
     Path((flow_id, message)): Path<(String, String)>,
     State(proxy): State<Arc<ProxyServer>>,
-    body: Vec<u8>,
+    body: axum::body::Bytes,
 ) -> StatusCode {
+    let body_vec = body.to_vec();
     if let Some(mut flow) = proxy.get_flow(&flow_id).await {
         flow.backup();
 
         match message.as_str() {
             "request" => {
-                flow.request.set_content(body);
+                flow.request.set_content(body_vec);
             }
             "response" => {
                 if let Some(ref mut response) = flow.response {
-                    response.set_content(body);
+                    response.set_content(body_vec);
                 }
             }
             _ => return StatusCode::BAD_REQUEST,
@@ -409,7 +407,7 @@ pub async fn set_flow_content(
 pub async fn get_flow_content_view(
     Path((flow_id, message, content_view)): Path<(String, String, String)>,
     State(proxy): State<Arc<ProxyServer>>,
-) -> Result<Json<Value>, StatusCode> {
+) -> std::result::Result<Json<Value>, StatusCode> {
     let flow = proxy.get_flow(&flow_id).await.ok_or(StatusCode::NOT_FOUND)?;
 
     let content = match message.as_str() {

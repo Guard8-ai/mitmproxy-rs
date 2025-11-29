@@ -41,6 +41,8 @@ pub struct ContextOptions {
     pub websocket: bool,
     /// Enable raw TCP mode
     pub rawtcp: bool,
+    /// Normalize outbound HTTP/2 headers
+    pub normalize_outbound_headers: bool,
 }
 
 /// Reference to a layer in the stack
@@ -62,6 +64,7 @@ impl Default for ContextOptions {
             keep_host_header: false,
             websocket: true,
             rawtcp: false,
+            normalize_outbound_headers: false,
         }
     }
 }
@@ -78,6 +81,7 @@ impl From<Arc<Config>> for ContextOptions {
             keep_host_header: false,
             websocket: true,
             rawtcp: false,
+            normalize_outbound_headers: false,
         }
     }
 }
@@ -146,5 +150,15 @@ impl Context {
     /// Get mutable server connection, panicking if not set
     pub fn server_mut(&mut self) -> &mut Server {
         self.server.as_mut().expect("Server connection not set")
+    }
+
+    /// Get the client connection for compatibility with code expecting client_conn field
+    pub fn client_conn(&self) -> &Connection {
+        &self.client.connection
+    }
+
+    /// Get the server connection for compatibility with code expecting server_conn field
+    pub fn server_conn(&self) -> Option<&Connection> {
+        self.server.as_ref().map(|s| &s.connection)
     }
 }

@@ -91,6 +91,12 @@ impl Connection {
     }
 }
 
+impl Default for Connection {
+    fn default() -> Self {
+        Self::new(TransportProtocol::Tcp)
+    }
+}
+
 /// Client connection with proxy mode
 #[derive(Debug, Clone, PartialEq)]
 pub struct Client {

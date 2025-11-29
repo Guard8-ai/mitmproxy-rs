@@ -2,11 +2,13 @@
 //! This mirrors the Python proxy server in mitmproxy/proxy/server.py
 
 use crate::proxy::{Context, Layer, AnyEvent, Command};
-use crate::connection::{Client, Server, Connection, ConnectionState};
+use crate::connection::{Client, Server, Connection, ConnectionState, TransportProtocol};
 use crate::config::Config;
+use crate::flow::HTTPFlow;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use std::collections::HashMap;
+use tokio::sync::RwLock;
 use tracing::{debug, info, error};
 
 /// Main proxy server that handles incoming connections
@@ -14,6 +16,8 @@ use tracing::{debug, info, error};
 pub struct ProxyServer {
     config: Arc<Config>,
     connections: HashMap<String, Box<dyn Layer>>,
+    /// Flow storage for API access
+    flows: RwLock<HashMap<String, HTTPFlow>>,
 }
 
 impl ProxyServer {
@@ -22,6 +26,73 @@ impl ProxyServer {
         Self {
             config,
             connections: HashMap::new(),
+            flows: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Get all flows
+    pub async fn get_flows(&self) -> Vec<HTTPFlow> {
+        let flows = self.flows.read().await;
+        flows.values().cloned().collect()
+    }
+
+    /// Get a specific flow by ID
+    pub async fn get_flow(&self, id: &str) -> Option<HTTPFlow> {
+        let flows = self.flows.read().await;
+        flows.get(id).cloned()
+    }
+
+    /// Update a flow
+    pub async fn update_flow(&self, flow: HTTPFlow) -> bool {
+        let mut flows = self.flows.write().await;
+        let id = flow.flow.id.clone();
+        if flows.contains_key(&id) {
+            flows.insert(id, flow);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Add a new flow
+    pub async fn add_flow(&self, flow: HTTPFlow) {
+        let mut flows = self.flows.write().await;
+        flows.insert(flow.flow.id.clone(), flow);
+    }
+
+    /// Remove a flow by ID
+    pub async fn remove_flow(&self, id: &str) -> bool {
+        let mut flows = self.flows.write().await;
+        flows.remove(id).is_some()
+    }
+
+    /// Clear all flows
+    pub async fn clear_flows(&self) {
+        let mut flows = self.flows.write().await;
+        flows.clear();
+    }
+
+    /// Run the proxy server (alternative entry point)
+    pub async fn run(&self) -> crate::Result<()> {
+        let addr = format!("{}:{}", self.config.proxy_host, self.config.proxy_port);
+        let listener = TcpListener::bind(&addr).await?;
+        info!("Proxy server listening on {}", addr);
+
+        loop {
+            match listener.accept().await {
+                Ok((stream, addr)) => {
+                    debug!("New connection from {}", addr);
+                    let config = self.config.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = Self::handle_connection(stream, addr.into(), config).await {
+                            error!("Error handling connection: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Error accepting connection: {}", e);
+                }
+            }
         }
     }
 
@@ -56,28 +127,15 @@ impl ProxyServer {
         addr: std::net::SocketAddr,
         config: Arc<Config>,
     ) -> crate::Result<()> {
-        // Create client connection
+        // Create client connection using the connection module's types
+        let mut connection = Connection::new(TransportProtocol::Tcp);
+        connection.peername = Some(addr);
+        connection.timestamp_start = Some(std::time::SystemTime::now());
+        connection.timestamp_tcp_setup = Some(std::time::SystemTime::now());
+
         let client = Client {
-            connection: Connection {
-                id: uuid::Uuid::new_v4().to_string(),
-                peername: Some((addr.ip().to_string(), addr.port())),
-                sockname: None,
-                address: Some((addr.ip().to_string(), addr.port())),
-                state: ConnectionState::Open,
-                timestamp_start: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()),
-                timestamp_end: None,
-                tls_established: false,
-                cert: None,
-                sni: None,
-                cipher: None,
-                alpn: None,
-                tls_version: None,
-                timestamp_tcp_setup: None,
-                timestamp_tls_setup: None,
-                error: None,
-                sockname_str: None,
-                peername_str: None,
-            },
+            connection,
+            proxy_mode: None,
         };
 
         // Create context

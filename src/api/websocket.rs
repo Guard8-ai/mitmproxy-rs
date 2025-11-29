@@ -123,7 +123,7 @@ pub async fn broadcast_flow_update(
     let flow_json = flow.to_json();
 
     // TODO: Apply filters per connection
-    let matching_filters = std::collections::HashMap::new();
+    let matching_filters: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
 
     let msg = WebSocketMessage {
         msg_type: update_type.to_string(),

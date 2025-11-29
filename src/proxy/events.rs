@@ -54,14 +54,14 @@ pub struct ConnectionClosed {
 }
 
 /// Emitted when a command has been completed
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CommandCompleted {
     pub command: Box<dyn Command>,
     pub reply: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Request for connection to be opened has been completed
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OpenConnectionCompleted {
     pub command: Box<dyn Command>,
     pub error: Option<String>,
@@ -74,7 +74,7 @@ pub struct Wakeup {
 }
 
 /// Hook completed event
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct HookCompleted {
     pub command: Box<dyn Command>,
 }

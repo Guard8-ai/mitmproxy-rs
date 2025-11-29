@@ -1,8 +1,8 @@
 //! Commands that layers can emit to communicate with higher layers
 
 use crate::connection::{Connection, Server};
-use openssl::ssl::SslStream;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// Base trait for all commands
 pub trait Command: Debug + Send + Sync {
@@ -10,6 +10,9 @@ pub trait Command: Debug + Send + Sync {
     fn is_blocking(&self) -> bool {
         false
     }
+
+    /// Get a reference to self as Any for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Request a wakeup event after the specified delay
@@ -21,6 +24,10 @@ pub struct RequestWakeup {
 impl Command for RequestWakeup {
     fn command_name(&self) -> &'static str {
         "RequestWakeup"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -39,6 +46,10 @@ pub struct SendData {
 impl Command for SendData {
     fn command_name(&self) -> &'static str {
         "SendData"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -62,6 +73,10 @@ impl Command for OpenConnection {
     fn is_blocking(&self) -> bool {
         true
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl ConnectionCommand for OpenConnection {
@@ -79,6 +94,10 @@ pub struct CloseConnection {
 impl Command for CloseConnection {
     fn command_name(&self) -> &'static str {
         "CloseConnection"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -98,6 +117,10 @@ pub struct CloseTcpConnection {
 impl Command for CloseTcpConnection {
     fn command_name(&self) -> &'static str {
         "CloseTcpConnection"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -134,6 +157,10 @@ impl Command for Log {
     fn command_name(&self) -> &'static str {
         "Log"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // TLS-related data structures
@@ -164,6 +191,10 @@ impl Command for TlsClienthelloHook {
     fn command_name(&self) -> &'static str {
         "TlsClienthelloHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for TlsClienthelloHook {
@@ -181,6 +212,10 @@ pub struct TlsStartClientHook {
 impl Command for TlsStartClientHook {
     fn command_name(&self) -> &'static str {
         "TlsStartClientHook"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -200,6 +235,10 @@ impl Command for TlsStartServerHook {
     fn command_name(&self) -> &'static str {
         "TlsStartServerHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for TlsStartServerHook {
@@ -217,6 +256,10 @@ pub struct TlsEstablishedClientHook {
 impl Command for TlsEstablishedClientHook {
     fn command_name(&self) -> &'static str {
         "TlsEstablishedClientHook"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -236,6 +279,10 @@ impl Command for TlsEstablishedServerHook {
     fn command_name(&self) -> &'static str {
         "TlsEstablishedServerHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for TlsEstablishedServerHook {
@@ -254,6 +301,10 @@ impl Command for TlsFailedClientHook {
     fn command_name(&self) -> &'static str {
         "TlsFailedClientHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for TlsFailedClientHook {
@@ -271,6 +322,10 @@ pub struct TlsFailedServerHook {
 impl Command for TlsFailedServerHook {
     fn command_name(&self) -> &'static str {
         "TlsFailedServerHook"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -291,6 +346,10 @@ impl Command for WebsocketStartHook {
     fn command_name(&self) -> &'static str {
         "WebsocketStartHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for WebsocketStartHook {
@@ -309,6 +368,10 @@ impl Command for WebsocketMessageHook {
     fn command_name(&self) -> &'static str {
         "WebsocketMessageHook"
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl StartHook for WebsocketMessageHook {
@@ -326,6 +389,10 @@ pub struct WebsocketEndHook {
 impl Command for WebsocketEndHook {
     fn command_name(&self) -> &'static str {
         "WebsocketEndHook"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

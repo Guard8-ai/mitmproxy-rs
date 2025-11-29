@@ -14,7 +14,7 @@ pub struct MitmproxyServer {
 
 impl MitmproxyServer {
     pub async fn new(config: Config) -> Result<Self> {
-        let proxy = Arc::new(ProxyServer::new(config.clone()));
+        let proxy = Arc::new(ProxyServer::new(Arc::new(config.clone())));
 
         Ok(Self { config, proxy })
     }

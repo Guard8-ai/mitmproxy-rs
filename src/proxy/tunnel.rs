@@ -154,17 +154,22 @@ impl TunnelLayer {
 
         if let Some(reply_cmd) = self.command_to_reply_to.take() {
             if let Some(ref mut child) = self.child_layer {
-                child
-                    .handle_event(Box::new(OpenConnectionCompleted {
-                        command: reply_cmd,
-                        error: err.map(|s| s.to_string()),
-                    }))
+                let event = AnyEvent::OpenConnectionCompleted(OpenConnectionCompleted {
+                    command: reply_cmd,
+                    error: err.map(|s| s.to_string()),
+                });
+                let mut generator = child.handle_event(event);
+                let mut commands = vec![];
+                while let Some(cmd) = generator.next_command() {
+                    commands.push(cmd);
+                }
+                commands
             } else {
                 vec![]
             }
         } else {
             let mut commands = vec![];
-            while let Some(event) = self.event_queue.pop_front() {
+            while let Some(_event) = self.event_queue.pop_front() {
                 // TODO: Convert buffered events
                 // commands.extend(self.event_to_child_sync(event));
             }
