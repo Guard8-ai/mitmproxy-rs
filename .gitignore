@@ -1,5 +1,24 @@
-# TaskGuard
-.taskguard/state/
-
 # Build artifacts
 target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TaskGuard state (keep config)
+.taskguard/state/
+
+# Claude Code
+.claude/
+
+# Temporary files
+*.tmp
+*.bak
+*.log
