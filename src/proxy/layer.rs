@@ -9,7 +9,7 @@
 //! .handle_event pauses the execution of ._handle_event and waits until it is called
 //! with the corresponding CommandCompleted event.
 
-use crate::proxy::{commands::Command, context::Context, events::{Event, AnyEvent, CommandCompleted}};
+use crate::proxy::{commands::Command, context::Context, events::{AnyEvent, CommandCompleted}};
 use std::collections::VecDeque;
 use std::any::Any;
 use std::future::Future;
@@ -164,7 +164,7 @@ impl<T: Default> CommandGenerator<T> for AsyncToSyncGenerator<T> {
             return Some(cmd);
         }
 
-        if let Some(future) = self.future.take() {
+        if let Some(_future) = self.future.take() {
             // Convert async future to sync execution - in a real implementation,
             // this would use a runtime or be handled by the proxy server
             // For now, we'll return an error command indicating async conversion needed
@@ -273,7 +273,7 @@ pub trait Layer: Send + Sync + std::fmt::Debug {
 
     /// Internal event handler that layers should implement.
     /// This can yield blocking commands and will be paused/resumed automatically.
-    fn _handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+    fn _handle_event(&mut self, _event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
         // Default implementation just returns empty generator
         Box::new(SimpleCommandGenerator::empty())
     }

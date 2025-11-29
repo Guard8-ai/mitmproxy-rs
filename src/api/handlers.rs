@@ -90,6 +90,7 @@ pub async fn get_commands(State(_proxy): State<Arc<ProxyServer>>) -> Json<Value>
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct ExecuteCommandRequest {
     arguments: Vec<String>,
 }
@@ -97,7 +98,7 @@ pub struct ExecuteCommandRequest {
 pub async fn execute_command(
     Path(cmd): Path<String>,
     State(_proxy): State<Arc<ProxyServer>>,
-    Json(req): Json<ExecuteCommandRequest>,
+    Json(_req): Json<ExecuteCommandRequest>,
 ) -> Json<Value> {
     match cmd.as_str() {
         "replay.client" => {
@@ -129,6 +130,7 @@ pub async fn get_flows(State(proxy): State<Arc<ProxyServer>>) -> Json<Vec<Value>
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct DumpQuery {
     filter: Option<String>,
 }
@@ -190,7 +192,9 @@ pub struct UpdateRequestRequest {
     scheme: Option<String>,
     host: Option<String>,
     port: Option<u16>,
+    #[allow(dead_code)]
     path: Option<String>,
+    #[allow(dead_code)]
     http_version: Option<String>,
     headers: Option<Vec<(String, String)>>,
     content: Option<String>,
@@ -198,6 +202,7 @@ pub struct UpdateRequestRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateResponseRequest {
+    #[allow(dead_code)]
     http_version: Option<String>,
     code: Option<u16>,
     msg: Option<String>,
@@ -446,7 +451,7 @@ pub async fn get_options(State(_proxy): State<Arc<ProxyServer>>) -> Json<Value> 
 
 pub async fn set_options(
     State(_proxy): State<Arc<ProxyServer>>,
-    Json(options): Json<Value>,
+    Json(_options): Json<Value>,
 ) -> StatusCode {
     // TODO: Update options
     StatusCode::OK
@@ -474,12 +479,13 @@ pub async fn get_processes(State(_proxy): State<Arc<ProxyServer>>) -> Json<Vec<V
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct ExecutableIconQuery {
     path: String,
 }
 
 pub async fn get_executable_icon(
-    Query(query): Query<ExecutableIconQuery>,
+    Query(_query): Query<ExecutableIconQuery>,
     State(_proxy): State<Arc<ProxyServer>>,
 ) -> Vec<u8> {
     // Return a transparent PNG for now

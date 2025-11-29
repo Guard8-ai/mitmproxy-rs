@@ -5,7 +5,7 @@ use tracing::{error, info};
 use crate::api;
 use crate::config::Config;
 use crate::proxy::ProxyServer;
-use crate::{Error, Result};
+use crate::Result;
 
 pub struct MitmproxyServer {
     config: Config,

@@ -8,14 +8,14 @@ use openssl::x509::extension::{
     AuthorityKeyIdentifier, BasicConstraints, KeyUsage, SubjectAlternativeName,
     SubjectKeyIdentifier,
 };
-use openssl::x509::{X509NameBuilder, X509Req, X509ReqBuilder, X509, X509Builder};
+use openssl::x509::{X509NameBuilder, X509, X509Builder};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{Error, Result};
+use crate::Result;
 
 pub struct CertificateAuthority {
     cert: X509,
@@ -207,7 +207,7 @@ impl CertificateAuthority {
         Ok((cert_builder.build(), key))
     }
 
-    fn load_ca_cert(cert_path: &Path, _key_path: &Path) -> Result<(X509, PKey<Private>)> {
+    fn load_ca_cert(_cert_path: &Path, _key_path: &Path) -> Result<(X509, PKey<Private>)> {
         // For simplicity, we'll just regenerate if loading fails
         // In a real implementation, you'd want to properly load the existing CA
         Self::generate_ca_cert()
@@ -215,7 +215,7 @@ impl CertificateAuthority {
 
     fn save_ca_cert(
         cert: &X509,
-        key: &PKey<Private>,
+        _key: &PKey<Private>,
         cert_path: &Path,
         _key_path: &Path,
     ) -> Result<()> {

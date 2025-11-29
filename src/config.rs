@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::{Error, Result};
+use crate::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

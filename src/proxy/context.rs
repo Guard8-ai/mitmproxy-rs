@@ -3,8 +3,7 @@
 
 use crate::config::Config;
 use crate::connection::{Client, Server, Connection};
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Context provided to each layer containing connection and configuration state.
 /// This mirrors the Python Context class behavior.
@@ -70,7 +69,7 @@ impl Default for ContextOptions {
 }
 
 impl From<Arc<Config>> for ContextOptions {
-    fn from(config: Arc<Config>) -> Self {
+    fn from(_config: Arc<Config>) -> Self {
         ContextOptions {
             proxy_debug: false, // TODO: read from config
             body_size_limit: None,
@@ -120,7 +119,7 @@ impl Context {
 
     /// Fork the context for a child layer
     pub fn fork(&self) -> Self {
-        let mut forked = self.clone();
+        let forked = self.clone();
         // In Python mitmproxy, fork() creates a copy but maintains the same connections
         // The layers list is shared but can be modified independently
         forked

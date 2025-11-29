@@ -2,9 +2,9 @@
 //! This mirrors the Python TCP layer in mitmproxy/proxy/layers/tcp.py
 
 use crate::proxy::{
-    commands::{Command, Log, LogLevel, SendData},
+    commands::SendData,
     context::Context,
-    events::{ConnectionClosed, DataReceived, Event, Start, AnyEvent},
+    events::{AnyEvent, Event},
     layer::{BaseLayer, CommandGenerator, Layer, SimpleCommandGenerator},
 };
 

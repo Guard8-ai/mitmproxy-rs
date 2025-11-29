@@ -1,8 +1,8 @@
 //! Proxy server implementation
 //! This mirrors the Python proxy server in mitmproxy/proxy/server.py
 
-use crate::proxy::{Context, Layer, AnyEvent, Command};
-use crate::connection::{Client, Server, Connection, ConnectionState, TransportProtocol};
+use crate::proxy::{Context, Layer, AnyEvent};
+use crate::connection::{Client, Connection, TransportProtocol};
 use crate::config::Config;
 use crate::flow::HTTPFlow;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use tracing::{debug, info, error};
 #[derive(Debug)]
 pub struct ProxyServer {
     config: Arc<Config>,
+    #[allow(dead_code)]
     connections: HashMap<String, Box<dyn Layer>>,
     /// Flow storage for API access
     flows: RwLock<HashMap<String, HTTPFlow>>,
@@ -123,7 +124,7 @@ impl ProxyServer {
 
     /// Handle a single connection
     async fn handle_connection(
-        stream: TcpStream,
+        _stream: TcpStream,
         addr: std::net::SocketAddr,
         config: Arc<Config>,
     ) -> crate::Result<()> {

@@ -330,7 +330,7 @@ mod tests {
 
         let stats = conn.get_message_stats();
         assert_eq!(stats.total_messages, 3);
-        assert_eq!(stats.total_bytes, 11); // 4 + 4 + 4 - 1 = 11
+        assert_eq!(stats.total_bytes, 12); // 4 + 4 + 4 = 12
         assert_eq!(stats.client_messages, 2);
         assert_eq!(stats.server_messages, 1);
         assert_eq!(stats.text_messages, 1);

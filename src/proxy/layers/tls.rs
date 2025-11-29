@@ -3,31 +3,29 @@
 use crate::connection::{Connection, Server, TransportProtocol, TlsVersion};
 use crate::proxy::{
     commands::{
-        ClientHelloData, CloseConnection, Command, Log, LogLevel, OpenConnection, SendData,
+        ClientHelloData, Command, Log, LogLevel, OpenConnection, SendData,
         TlsClienthelloHook, TlsData, TlsEstablishedClientHook, TlsEstablishedServerHook,
         TlsFailedClientHook, TlsFailedServerHook, TlsStartClientHook, TlsStartServerHook,
     },
     context::Context,
-    events::{ConnectionClosed, DataReceived, Event, Start, AnyEvent},
-    layer::{AsyncToSyncGenerator, CommandGenerator, Layer, NextLayer, SimpleCommandGenerator},
+    events::AnyEvent,
+    layer::{CommandGenerator, Layer, NextLayer, SimpleCommandGenerator},
     tunnel::{TunnelLayer, TunnelState},
 };
 use openssl::ssl::{
-    SslConnector, SslContext, SslMethod, SslStream, SslVerifyMode, SslOptions, SslVersion,
-    SslAcceptor, Ssl, ShutdownResult
+    SslContext, SslMethod, SslVerifyMode, SslOptions,
+    Ssl,
 };
-use openssl::x509::X509;
-use openssl::pkey::{PKey, Private};
-use std::collections::VecDeque;
-use std::io::{Read, Write};
 use std::time::SystemTime;
-use std::net::TcpStream;
 use std::sync::Arc;
 use crate::certs::CertificateAuthority;
 
 /// TLS version constants
+#[allow(dead_code)]
 const HTTP1_ALPNS: &[&[u8]] = &[b"http/1.1", b"http/1.0", b"http/0.9"];
+#[allow(dead_code)]
 const HTTP2_ALPN: &[u8] = b"h2";
+#[allow(dead_code)]
 const HTTP3_ALPN: &[u8] = b"h3";
 
 /// Extract ClientHello from TLS record data
@@ -324,7 +322,7 @@ impl TlsLayerBase {
     }
 
     /// Handle TLS handshake data
-    pub fn handle_tls_data(&mut self, data: &[u8]) -> Vec<Box<dyn Command>> {
+    pub fn handle_tls_data(&mut self, _data: &[u8]) -> Vec<Box<dyn Command>> {
         if self.ssl_connection.is_none() {
             return vec![Box::new(Log {
                 message: "No SSL connection available for handshake".to_string(),
@@ -358,8 +356,8 @@ impl TlsLayerBase {
     /// Create SSL context for client connections
     pub fn create_client_ssl_context(
         &self,
-        ca: &CertificateAuthority,
-        hostname: &str,
+        _ca: &CertificateAuthority,
+        _hostname: &str,
     ) -> Result<SslContext, String> {
         // Get certificate for the hostname
         // TODO: This needs to be converted to sync CA calls or use AsyncToSyncGenerator
@@ -440,21 +438,21 @@ impl TlsLayerBase {
             };
 
             // Extract cipher name
-            if let Some(cipher) = ssl.current_cipher() {
+            if let Some(_cipher) = ssl.current_cipher() {
                 // In a real implementation, store cipher name in connection
                 // self.tunnel.conn.cipher = Some(cipher.name().to_string());
             }
 
             // Extract negotiated ALPN protocol
             if let Some(alpn) = ssl.selected_alpn_protocol() {
-                if let Ok(alpn_str) = std::str::from_utf8(alpn) {
+                if let Ok(_alpn_str) = std::str::from_utf8(alpn) {
                     // In a real implementation, store ALPN in connection
                     // self.tunnel.conn.alpn = Some(alpn_str.to_string());
                 }
             }
 
             // Extract peer certificates
-            if let Some(peer_cert) = ssl.peer_certificate() {
+            if let Some(_peer_cert) = ssl.peer_certificate() {
                 // In a real implementation, store certificate list in connection
                 // if let Ok(cert_info) = crate::certs::cert_to_info(&peer_cert) {
                 //     self.tunnel.conn.certificate_list = vec![cert_info];
@@ -698,7 +696,7 @@ impl ClientTlsLayer {
 
 impl Layer for ClientTlsLayer {
     fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
-        if let AnyEvent::Start(start_event) = &event {
+        if let AnyEvent::Start(_start_event) = &event {
             // Start the TLS handshake process
             self.base.tunnel.tunnel_state = TunnelState::Establishing;
             return Box::new(SimpleCommandGenerator::new(self.base.tunnel.event_to_child_sync(event)));
@@ -828,7 +826,7 @@ impl ServerTlsLayer {
 
 impl Layer for ServerTlsLayer {
     fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
-        if let AnyEvent::Start(start_event) = &event {
+        if let AnyEvent::Start(_start_event) = &event {
             return Box::new(SimpleCommandGenerator::new(self.start_handshake()));
         }
 

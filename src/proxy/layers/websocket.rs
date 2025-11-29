@@ -1,19 +1,19 @@
 //! WebSocket layer implementation
 //! This mirrors the Python WebSocket layer in mitmproxy/proxy/layers/websocket.py
 
-use crate::proxy::{Layer, Context, AnyEvent, Command, CommandGenerator, SimpleCommandGenerator};
+use crate::proxy::{Layer, Context, AnyEvent, CommandGenerator, SimpleCommandGenerator};
 use crate::flow::{WebSocketMessage, WebSocketMessageType};
 use tokio_tungstenite::tungstenite::Message;
 
 /// WebSocket layer for handling WebSocket connections
 #[derive(Debug)]
 pub struct WebSocketLayer {
-    context: Context,
+    _context: Context,
 }
 
 impl WebSocketLayer {
     pub fn new(context: Context) -> Self {
-        Self { context }
+        Self { _context: context }
     }
 
     /// Convert WebSocket message to tungstenite message
@@ -37,7 +37,7 @@ impl WebSocketLayer {
 }
 
 impl Layer for WebSocketLayer {
-    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
         // TODO: Implement WebSocket event handling
         Box::new(SimpleCommandGenerator::empty())
     }

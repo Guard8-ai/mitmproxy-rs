@@ -4,7 +4,7 @@ use crate::connection::Connection;
 use crate::proxy::{
     commands::Command,
     context::Context,
-    events::{ConnectionClosed, DataReceived, Event, OpenConnectionCompleted, Start, AnyEvent},
+    events::{ConnectionClosed, DataReceived, OpenConnectionCompleted, AnyEvent},
     layer::{BaseLayer, CommandGenerator, Layer, SimpleCommandGenerator},
 };
 use std::collections::VecDeque;
@@ -168,7 +168,7 @@ impl TunnelLayer {
                 vec![]
             }
         } else {
-            let mut commands = vec![];
+            let commands = vec![];
             while let Some(_event) = self.event_queue.pop_front() {
                 // TODO: Convert buffered events
                 // commands.extend(self.event_to_child_sync(event));

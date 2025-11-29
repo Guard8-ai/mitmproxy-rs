@@ -2,7 +2,6 @@
 
 use crate::connection::{Connection, Server};
 use std::fmt::Debug;
-use std::sync::Arc;
 
 /// Base trait for all commands
 pub trait Command: Debug + Send + Sync {

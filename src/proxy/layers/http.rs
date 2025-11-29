@@ -12,18 +12,16 @@ Key components:
 */
 
 use crate::connection::{Connection, ConnectionState};
-use crate::flow::{HTTPFlow, HTTPRequest, HTTPResponse, Flow};
+use crate::flow::{HTTPFlow, HTTPRequest, HTTPResponse};
 use crate::proxy::context::Context;
-use crate::proxy::{commands::*, events::*, layer::*, context::*};
+use crate::proxy::{commands::*, events::*, layer::*};
 use crate::error::ProxyError;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use bytes::Bytes;
-use tokio::sync::mpsc;
-use tracing::{debug, warn, error, info};
-use uuid::Uuid;
+use tracing::{debug, warn, error};
 use http;
 use regex::Regex;
 use std::sync::OnceLock;
@@ -517,7 +515,7 @@ pub struct HttpStream {
 }
 
 impl HttpStream {
-    pub fn new(context: Context, stream_id: StreamId) -> Self {
+    pub fn new(_context: Context, stream_id: StreamId) -> Self {
         // Create a placeholder request - will be populated when actual request is received
         let request = crate::flow::HTTPRequest::new(
             "GET".to_string(),
@@ -543,7 +541,7 @@ impl HttpStream {
     pub async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         debug!("HttpStream {} handling event: {:?}", self.stream_id, std::any::type_name_of_val(&*event));
 
-        if let Some(start_event) = event.as_any().downcast_ref::<Start>() {
+        if let Some(_start_event) = event.as_any().downcast_ref::<Start>() {
             return self.handle_start().await;
         }
 
@@ -743,7 +741,7 @@ impl HttpStream {
 }
 
 impl Layer for HttpStream {
-    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Convert async HttpStream::handle_event to sync CommandGenerator pattern
         Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
     }
@@ -849,7 +847,7 @@ impl HttpLayer {
 }
 
 impl Layer for HttpLayer {
-    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Convert async route_event to sync CommandGenerator pattern
         Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
     }
@@ -1278,7 +1276,7 @@ impl Http1Connection for Http1Server {
 }
 
 impl Layer for Http1Server {
-    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
         // Temporary placeholder implementation to match Layer trait
         // TODO: Convert async methods to proper CommandGenerator pattern
         Box::new(SimpleCommandGenerator::empty())
@@ -1289,6 +1287,7 @@ impl Layer for Http1Server {
     }
 }
 
+#[allow(dead_code)]
 impl Http1Server {
     /// Read HTTP request body, matching Python's read_body method
     async fn read_body(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
@@ -1505,7 +1504,7 @@ impl Http1Client {
         let mut commands = Vec::new();
 
         // Handle RequestProtocolError separately
-        if let Some(req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
+        if let Some(_req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
             commands.push(Box::new(CloseConnection {
                 connection: self.context.server_conn().cloned().unwrap_or_default(),
             }) as Box<dyn Command>);
@@ -2159,7 +2158,7 @@ impl Http1Connection for Http1Client {
 }
 
 impl Layer for Http1Client {
-    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Convert async handle_event to sync CommandGenerator pattern
         Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
     }
@@ -2169,6 +2168,7 @@ impl Layer for Http1Client {
     }
 }
 
+#[allow(dead_code)]
 impl Http1Client {
     /// Try to extract an HTTP event from a generic event
     /// This is used in the Wait state to handle incoming HTTP events
@@ -2324,6 +2324,7 @@ impl Default for Http2Config {
 /// Buffered HTTP/2 connection wrapper, matching Python's BufferedH2Connection
 /// This wraps h2 server/client connection and adds internal send buffers
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BufferedH2Connection {
     // We'll store connection state and handle it manually to match Python's approach
     stream_buffers: HashMap<u32, VecDeque<SendH2Data>>,
@@ -2439,7 +2440,7 @@ impl BufferedH2Connection {
     }
 
     /// Process buffered data for a stream when window updates occur
-    pub fn stream_window_updated(&mut self, stream_id: u32) -> bool {
+    pub fn stream_window_updated(&mut self, _stream_id: u32) -> bool {
         // TODO: Implement window update processing like Python version
         false
     }
@@ -2456,6 +2457,7 @@ pub struct Http2Connection {
     pub config: Http2Config,
 }
 
+#[allow(dead_code)]
 impl Http2Connection {
     pub fn new(context: Context, conn: Arc<Connection>, config: Http2Config) -> Self {
         // Create the buffered H2 connection wrapper
@@ -2518,13 +2520,13 @@ impl Http2Connection {
     }
 
     /// Simple data received handler returning () generator
-    fn handle_data_received_simple(&mut self, stream_id: u32, data: Bytes, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_data_received_simple(&mut self, _stream_id: u32, _data: Bytes, _end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Implement properly
         Box::new(SimpleCommandGenerator::new(vec![]))
     }
 
     /// Simple headers received handler returning () generator
-    fn handle_headers_received_simple(&mut self, stream_id: u32, headers: Vec<(Bytes, Bytes)>, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_headers_received_simple(&mut self, _stream_id: u32, _headers: Vec<(Bytes, Bytes)>, _end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Implement properly
         Box::new(SimpleCommandGenerator::new(vec![]))
     }
@@ -2681,12 +2683,12 @@ impl Http2Connection {
         Box::new(SimpleCommandGenerator::new(commands))
     }
 
-    fn handle_window_update(&mut self, stream_id: u32) -> Box<dyn CommandGenerator<()>> {
+    fn handle_window_update(&mut self, _stream_id: u32) -> Box<dyn CommandGenerator<()>> {
         // Window update frames are handled automatically by the h2 library
         Box::new(SimpleCommandGenerator::new(vec![]))
     }
 
-    fn handle_ping(&mut self, ack: bool, data: [u8; 8]) -> Box<dyn CommandGenerator<()>> {
+    fn handle_ping(&mut self, _ack: bool, _data: [u8; 8]) -> Box<dyn CommandGenerator<()>> {
         // Ping frames are handled automatically by the h2 library
         Box::new(SimpleCommandGenerator::new(vec![]))
     }
@@ -2748,7 +2750,7 @@ impl Http2Connection {
             format!("{}://{}", scheme, path)
         };
 
-        let url = url::Url::parse(&url_str)
+        let _url = url::Url::parse(&url_str)
             .map_err(|e| ProxyError::Proxy(format!("Invalid URL: {}", e)))?;
 
         // Convert headers
@@ -2784,7 +2786,7 @@ impl Http2Connection {
     }
 
     /// Close connection with error, matching Python's protocol_error method
-    pub async fn protocol_error(&mut self, message: String, error_code: Option<h2::Reason>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub async fn protocol_error(&mut self, message: String, _error_code: Option<h2::Reason>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         warn!("HTTP/2 protocol error: {}", message);
 
         // Send GOAWAY frame
@@ -2851,7 +2853,7 @@ impl Http2Server {
 
     /// Handle HTTP/2 request received event, matching Python's handle_h2_event for RequestReceived
     pub async fn handle_request_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let (host, port, method, scheme, authority, path, headers) = parse_h2_request_headers(headers)?;
+        let (host, port, method, scheme, _authority, path, headers) = parse_h2_request_headers(headers)?;
 
         let mut request = crate::flow::HTTPRequest::new(
             String::from_utf8_lossy(&method).to_string(),
@@ -2919,7 +2921,7 @@ impl Http2Server {
 }
 
 impl Layer for Http2Server {
-    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Convert async handle_event to sync CommandGenerator pattern
         Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
     }
@@ -2929,13 +2931,14 @@ impl Layer for Http2Server {
     }
 }
 
+#[allow(dead_code)]
 impl Http2Server {
     async fn handle_response_headers(&mut self, event: ResponseHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         if !self.base.is_open_for_us(event.stream_id) {
             return Ok(vec![]);
         }
 
-        let headers = format_h2_response_headers(&self.base.context, &event)?;
+        let _headers = format_h2_response_headers(&self.base.context, &event)?;
         // TODO: Send headers using h2 library
 
         Ok(vec![
@@ -2984,7 +2987,7 @@ impl Http2Server {
             // Send error response headers
             // TODO: Send error headers using h2 library
         } else {
-            let error_code = match event.code {
+            let _error_code = match event.code {
                 ErrorCode::Cancel | ErrorCode::ClientDisconnected => h2::Reason::CANCEL,
                 ErrorCode::Kill => h2::Reason::INTERNAL_ERROR,
                 ErrorCode::Http11Required => h2::Reason::HTTP_1_1_REQUIRED,
@@ -2993,7 +2996,6 @@ impl Http2Server {
                 ErrorCode::RequestTooLarge | ErrorCode::ResponseTooLarge |
                 ErrorCode::ConnectFailed | ErrorCode::DestinationUnknown |
                 ErrorCode::RequestValidationFailed | ErrorCode::ResponseValidationFailed => h2::Reason::INTERNAL_ERROR,
-                _ => h2::Reason::INTERNAL_ERROR,
             };
 
             // TODO: Reset stream using h2 library
@@ -3026,7 +3028,7 @@ pub struct Http2Client {
 impl Http2Client {
     pub fn new(context: Context) -> Self {
         let config = Http2Config::default();
-        let mut base = Http2Connection::new(context, Arc::new(Connection::default()), config);
+        let base = Http2Connection::new(context, Arc::new(Connection::default()), config);
 
         // Disable HTTP/2 push
         // TODO: Configure h2 connection to disable push
@@ -3119,7 +3121,7 @@ impl Http2Client {
 }
 
 impl Layer for Http2Client {
-    fn handle_event(&mut self, event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
+    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         // TODO: Convert async handle_event to sync CommandGenerator pattern
         Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
     }
@@ -3129,6 +3131,7 @@ impl Layer for Http2Client {
     }
 }
 
+#[allow(dead_code)]
 impl Http2Client {
     async fn handle_request_headers(&mut self, event: RequestHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
         // Map stream IDs
@@ -3149,7 +3152,7 @@ impl Http2Client {
             ours
         };
 
-        let headers = format_h2_request_headers(&self.base.context, &event)?;
+        let _headers = format_h2_request_headers(&self.base.context, &event)?;
         // TODO: Send headers using h2 library
         self.base.streams.insert(ours as StreamId, Http2StreamState::ExpectingHeaders);
 
@@ -3193,7 +3196,7 @@ impl Http2Client {
 /// Utility functions for HTTP/2 header parsing and formatting, matching Python implementations
 
 /// Normalize HTTP/1.1 headers for HTTP/2, matching Python's normalize_h1_headers
-pub fn normalize_h1_headers(headers: Vec<(Bytes, Bytes)>, is_client: bool) -> Result<Vec<(Bytes, Bytes)>, ProxyError> {
+pub fn normalize_h1_headers(headers: Vec<(Bytes, Bytes)>, _is_client: bool) -> Result<Vec<(Bytes, Bytes)>, ProxyError> {
     // HTTP/1 servers commonly send capitalized headers, which isn't valid HTTP/2
     let mut normalized = Vec::new();
 
@@ -3238,7 +3241,7 @@ pub fn format_h2_request_headers(context: &Context, event: &RequestHeaders) -> R
     };
     pseudo_headers.push((Bytes::from(":authority"), Bytes::from(authority)));
 
-    let mut headers = if event.request.http_version == "HTTP/2.0" || event.request.http_version == "HTTP/3.0" {
+    let headers = if event.request.http_version == "HTTP/2.0" || event.request.http_version == "HTTP/3.0" {
         let mut hdrs = event.request.headers.iter()
             .map(|(k, v)| (Bytes::from(k.clone()), Bytes::from(v.clone())))
             .collect::<Vec<_>>();
