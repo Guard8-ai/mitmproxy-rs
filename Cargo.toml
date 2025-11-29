@@ -1,0 +1,106 @@
+[package]
+name = "mitmproxy-rs"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust implementation of mitmproxy's HTTP intercepting proxy with REST API"
+license = "MIT"
+authors = ["mitmproxy-rs contributors"]
+repository = "https://github.com/Guard8-ai/mitmproxy-rs"
+readme = "README.md"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# HTTP server and client
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+
+# Web framework for REST API
+axum = { version = "0.7", features = ["ws", "multipart", "query"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace", "auth"] }
+
+# JSON and serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# TLS and certificates
+openssl = "0.10"
+rcgen = "0.12"
+
+# URL parsing and manipulation
+url = "2.4"
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Configuration
+config = "0.14"
+
+# Directory utilities
+dirs = "5.0"
+
+# SHA2 hashing
+sha2 = "0.10"
+
+# WebSocket support
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# Base64 encoding
+base64 = "0.22"
+
+# HTTP parsing utilities
+httparse = "1.8"
+
+# HTTP/2 protocol implementation
+h2 = "0.4"
+
+# HTTP types
+http = "1.0"
+
+# Byte manipulation
+bytes = "1.5"
+
+# Regular expressions for filtering
+regex = "1.10"
+
+# Hash map with stable iteration order
+indexmap = { version = "2.0", features = ["serde"] }
+
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# File system utilities
+tempfile = "3.8"
+
+# Async trait support
+async-trait = "0.1"
+
+[dev-dependencies]
+# Testing utilities
+tokio-test = "0.4"
+mockall = "0.12"
+wiremock = "0.6"
+
+[[bin]]
+name = "mitmproxy-rs"
+path = "src/main.rs"
+
+[lib]
+name = "mitmproxy_rs"
+path = "src/lib.rs"

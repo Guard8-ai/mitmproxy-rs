@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/data/git/Guard8.ai/mitmproxy-rs/target/debug/build/mime_guess-f45946f0fabe880f/out/mime_types_generated.rs

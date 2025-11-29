@@ -1,0 +1,2 @@
+fn(axum::extract::State<Arc<{type error}, {type error}>>, Vec<u8>) -> impl futures_util::Future<Output = std::result::Result<(), error::Error>> {load_flows}
+fn(axum::extract::State<Arc<{type error}, {type error}>>, Vec<u8>) -> impl futures_util::Future<Output = std::result::Result<(), error::Error>> {load_flows}: Handler<_, _>

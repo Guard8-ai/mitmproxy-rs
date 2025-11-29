@@ -1,0 +1,2 @@
+fn(axum::extract::Path<(std::string::String, std::string::String, std::string::String)>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl futures_util::Future<Output = std::result::Result<axum::Json<serde_json::Value>, error::Error>> {get_flow_content_view}
+fn(axum::extract::Path<(std::string::String, std::string::String, std::string::String)>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl futures_util::Future<Output = std::result::Result<axum::Json<serde_json::Value>, error::Error>> {get_flow_content_view}: Handler<_, _>

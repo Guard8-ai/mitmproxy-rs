@@ -1,0 +1,2 @@
+fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl futures_util::Future<Output = std::result::Result<std::string::String, error::Error>> {duplicate_flow}
+fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl futures_util::Future<Output = std::result::Result<std::string::String, error::Error>> {duplicate_flow}: Handler<_, _>

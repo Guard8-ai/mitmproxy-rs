@@ -1,0 +1,2 @@
+fn(axum::extract::Path<(std::string::String, std::string::String)>, axum::extract::State<Arc<{type error}, {type error}>>, Vec<u8>) -> impl futures_util::Future<Output = http::StatusCode> {set_flow_content}
+fn(axum::extract::Path<(std::string::String, std::string::String)>, axum::extract::State<Arc<{type error}, {type error}>>, Vec<u8>) -> impl futures_util::Future<Output = http::StatusCode> {set_flow_content}: Handler<_, _>

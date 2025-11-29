@@ -1,0 +1,2 @@
+fn(axum::extract::Path<(std::string::String, std::string::String)>, axum::extract::State<Arc<proxy::server::ProxyServer>>) -> impl futures_util::Future<Output = std::result::Result<Vec<u8>, error::Error>> {get_flow_content}
+fn(axum::extract::Path<(std::string::String, std::string::String)>, axum::extract::State<Arc<proxy::server::ProxyServer>>) -> impl futures_util::Future<Output = std::result::Result<Vec<u8>, error::Error>> {get_flow_content}: Handler<_, _>
