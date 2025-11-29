@@ -1,2 +1,0 @@
-fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl std::future::Future<Output = std::result::Result<axum::Json<serde_json::Value>, error::Error>> {get_flow}
-fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl std::future::Future<Output = std::result::Result<axum::Json<serde_json::Value>, error::Error>> {get_flow}: Handler<_, _>

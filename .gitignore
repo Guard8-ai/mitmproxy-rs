@@ -1,2 +1,5 @@
 # TaskGuard
 .taskguard/state/
+
+# Build artifacts
+target/

@@ -1,2 +1,0 @@
-fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>, axum::Json<UpdateFlowRequest>) -> impl futures_util::Future<Output = std::result::Result<http::StatusCode, error::Error>> {update_flow}
-fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<{type error}, {type error}>>, axum::Json<UpdateFlowRequest>) -> impl futures_util::Future<Output = std::result::Result<http::StatusCode, error::Error>> {update_flow}: Handler<_, _>

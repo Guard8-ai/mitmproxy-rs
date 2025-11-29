@@ -1,2 +1,0 @@
-fn(Query<DumpQuery>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl std::future::Future<Output = std::result::Result<Vec<u8>, error::Error>> {dump_flows}
-fn(Query<DumpQuery>, axum::extract::State<Arc<{type error}, {type error}>>) -> impl std::future::Future<Output = std::result::Result<Vec<u8>, error::Error>> {dump_flows}: Handler<_, _>
