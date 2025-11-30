@@ -1,7 +1,7 @@
 ---
 id: backend-001
 title: Add SSE Stream Parsing Module
-status: todo
+status: done
 priority: critical
 tags:
 - setup
@@ -39,9 +39,9 @@ Create `src/sse.rs`:
 - Return iterator of parsed events
 
 #### Acceptance Criteria
-- [ ] Parse standard SSE format (data, event, id, retry fields)
-- [ ] Handle chunked/streaming responses
-- [ ] Extract JSON payloads from data fields
-- [ ] Unit tests with real Claude API response samples
+- [x] Parse standard SSE format (data, event, id, retry fields)
+- [x] Handle chunked/streaming responses
+- [x] Extract JSON payloads from data fields
+- [x] Unit tests with real Claude API response samples
 
 ---
