@@ -538,58 +538,58 @@ impl HttpStream {
     }
 
     /// Handle incoming HTTP events, matching Python's _handle_event method
-    pub async fn handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} handling event: {:?}", self.stream_id, std::any::type_name_of_val(&*event));
 
         if let Some(_start_event) = event.as_any().downcast_ref::<Start>() {
-            return self.handle_start().await;
+            return self.handle_start();
         }
 
         // Handle HTTP events based on current state
         if let Some(req_headers) = event.as_any().downcast_ref::<RequestHeaders>() {
-            return self.handle_request_headers(req_headers.clone()).await;
+            return self.handle_request_headers(req_headers.clone());
         }
 
         if let Some(req_data) = event.as_any().downcast_ref::<RequestData>() {
-            return self.handle_request_data(req_data.clone()).await;
+            return self.handle_request_data(req_data.clone());
         }
 
         if let Some(req_end) = event.as_any().downcast_ref::<RequestEndOfMessage>() {
-            return self.handle_request_end(req_end.clone()).await;
+            return self.handle_request_end(req_end.clone());
         }
 
         if let Some(resp_headers) = event.as_any().downcast_ref::<ResponseHeaders>() {
-            return self.handle_response_headers(resp_headers.clone()).await;
+            return self.handle_response_headers(resp_headers.clone());
         }
 
         if let Some(resp_data) = event.as_any().downcast_ref::<ResponseData>() {
-            return self.handle_response_data(resp_data.clone()).await;
+            return self.handle_response_data(resp_data.clone());
         }
 
         if let Some(resp_end) = event.as_any().downcast_ref::<ResponseEndOfMessage>() {
-            return self.handle_response_end(resp_end.clone()).await;
+            return self.handle_response_end(resp_end.clone());
         }
 
         if let Some(req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
-            return self.handle_protocol_error(req_error.message.clone()).await;
+            return self.handle_protocol_error(req_error.message.clone());
         }
 
         if let Some(resp_error) = event.as_any().downcast_ref::<ResponseProtocolError>() {
-            return self.handle_protocol_error(resp_error.message.clone()).await;
+            return self.handle_protocol_error(resp_error.message.clone());
         }
 
         warn!("HttpStream {} received unhandled event: {:?}",
               self.stream_id, std::any::type_name_of_val(&*event));
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_start(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_start(&mut self) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} starting", self.stream_id);
         self.client_state = "wait_for_request_headers".to_string();
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_request_headers(&mut self, event: RequestHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_headers(&mut self, event: RequestHeaders) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} received request headers for {}", self.stream_id, event.request.url());
 
         // Update flow with request
@@ -599,7 +599,7 @@ impl HttpStream {
 
         // Validate request
         if let Err(error_msg) = self.validate_request(&event.request) {
-            return Ok(vec![
+            return Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(SendHttp {
                     event: Box::new(ResponseProtocolError {
                         stream_id: self.stream_id,
@@ -608,12 +608,12 @@ impl HttpStream {
                     }),
                     connection: crate::connection::Connection::default(),
                 })
-            ]);
+            ]));
         }
 
         // Handle CONNECT method
         if event.request.method.to_uppercase() == "CONNECT" {
-            return self.handle_connect().await;
+            return self.handle_connect();
         }
 
         // Set appropriate scheme/host/port based on mode
@@ -626,16 +626,16 @@ impl HttpStream {
         };
         self.server_state = "wait_for_response_headers".to_string();
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_request_data(&mut self, event: RequestData) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_data(&mut self, event: RequestData) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} received {} bytes of request data", self.stream_id, event.data.len());
         self.request_body_buf.extend(&event.data);
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_request_end(&mut self, _event: RequestEndOfMessage) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_end(&mut self, _event: RequestEndOfMessage) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} request complete", self.stream_id);
 
         // Finalize request body
@@ -646,10 +646,10 @@ impl HttpStream {
 
         // TODO: Trigger request hook and make server connection
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_response_headers(&mut self, event: ResponseHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_headers(&mut self, event: ResponseHeaders) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} received response headers: {} {}",
                self.stream_id, event.response.status_code, event.response.reason);
 
@@ -663,16 +663,16 @@ impl HttpStream {
             "consume_response_body".to_string()
         };
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_response_data(&mut self, event: ResponseData) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_data(&mut self, event: ResponseData) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} received {} bytes of response data", self.stream_id, event.data.len());
         self.response_body_buf.extend(&event.data);
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_response_end(&mut self, _event: ResponseEndOfMessage) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_end(&mut self, _event: ResponseEndOfMessage) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} response complete", self.stream_id);
 
         // Finalize response body
@@ -687,44 +687,44 @@ impl HttpStream {
         // Check for protocol upgrades (WebSocket, etc.)
         if let Some(ref response) = self.flow.response {
             if response.status_code == 101 {
-                return self.handle_protocol_upgrade().await;
+                return self.handle_protocol_upgrade();
             }
         }
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(DropStream {
                 stream_id: self.stream_id,
             })
-        ])
+        ]))
     }
 
-    async fn handle_protocol_error(&mut self, message: String) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_protocol_error(&mut self, message: String) -> Box<dyn CommandGenerator<()>> {
         error!("HttpStream {} protocol error: {}", self.stream_id, message);
         self.flow.flow.set_error(message);
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(DropStream {
                 stream_id: self.stream_id,
             })
-        ])
+        ]))
     }
 
-    async fn handle_connect(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_connect(&mut self) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} handling CONNECT request", self.stream_id);
 
         self.client_state = "done".to_string();
 
         // TODO: Implement CONNECT handling with tunnel creation
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_protocol_upgrade(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_protocol_upgrade(&mut self) -> Box<dyn CommandGenerator<()>> {
         debug!("HttpStream {} handling protocol upgrade", self.stream_id);
 
         // TODO: Create child layer for upgraded protocol (WebSocket, etc.)
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     fn validate_request(&self, request: &HTTPRequest) -> Result<(), String> {
@@ -785,11 +785,11 @@ impl HttpLayer {
     }
 
     /// Route event to appropriate child layer or stream
-    pub async fn route_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn route_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         // Handle start event
         if event.as_any().downcast_ref::<Start>().is_some() {
             debug!("HttpLayer starting in {:?} mode", self.mode);
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         // Route HTTP events to streams
@@ -804,7 +804,7 @@ impl HttpLayer {
             }
 
             if let Some(stream) = self.streams.get_mut(&stream_id) {
-                return stream.handle_event(event).await;
+                return stream.handle_event(event);
             }
         }
 
@@ -812,7 +812,7 @@ impl HttpLayer {
         // TODO: Implement connection event routing
 
         warn!("HttpLayer received unhandled event: {:?}", std::any::type_name_of_val(&*event));
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
@@ -928,8 +928,8 @@ impl Http1Server {
     }
 
     /// Send HTTP event to client, matching Python's send method
-    pub async fn send_event(&mut self, event: Box<dyn HttpEvent>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let mut commands = Vec::new();
+    pub fn send_event(&mut self, event: Box<dyn HttpEvent>) -> Box<dyn CommandGenerator<()>> {
+        let mut commands: Vec<Box<dyn Command>> = Vec::new();
 
         match event.as_ref() {
             _ if event.as_any().downcast_ref::<ResponseHeaders>().is_some() => {
@@ -945,7 +945,13 @@ impl Http1Server {
                     }
                 }
 
-                let raw_response = self.assemble_response_head(&response)?;
+                let raw_response = match self.assemble_response_head(&response) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("Failed to assemble response head: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
                 commands.push(Box::new(SendData {
                     connection: self.context.client_conn().clone(),
                     data: raw_response,
@@ -979,13 +985,24 @@ impl Http1Server {
                         }
                     }
                 }
-                commands.extend(self.mark_done(false, true).await?);
+                let mark_done_commands = self.mark_done(false, true);
+                // Extract commands from the generator
+                let mut gen = mark_done_commands;
+                while let Some(cmd) = gen.next_command() {
+                    commands.push(cmd);
+                }
             }
             _ if event.as_any().downcast_ref::<ResponseProtocolError>().is_some() => {
                 let resp_error = event.as_any().downcast_ref::<ResponseProtocolError>().unwrap();
                 if let Some(status) = resp_error.code.http_status_code() {
                     if self.response.is_none() {
-                        let error_response = self.make_error_response(status, &resp_error.message)?;
+                        let error_response = match self.make_error_response(status, &resp_error.message) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                error!("Failed to make error response: {}", e);
+                                return Box::new(SimpleCommandGenerator::empty());
+                            }
+                        };
                         commands.push(Box::new(SendData {
                             connection: self.context.client_conn().clone(),
                             data: error_response,
@@ -997,16 +1014,16 @@ impl Http1Server {
                 }) as Box<dyn Command>);
             }
             _ => {
-                return Err(ProxyError::Proxy(format!("Unexpected HTTP event: {:?}",
-                    std::any::type_name_of_val(event.as_ref()))));
+                error!("Unexpected HTTP event: {:?}", std::any::type_name_of_val(event.as_ref()));
+                return Box::new(SimpleCommandGenerator::empty());
             }
         }
 
-        Ok(commands)
+        Box::new(SimpleCommandGenerator::new(commands))
     }
 
     /// Read HTTP headers from buffer, matching Python's read_headers method
-    pub async fn read_headers(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn read_headers(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             self.receive_buffer.extend(&data_received.data);
 
@@ -1014,9 +1031,15 @@ impl Http1Server {
                 match self.parse_request_head(&request_lines) {
                     Ok(request) => {
                         self.request = Some(request.clone());
-                        let expected_body_size = self.calculate_expected_body_size(&request)?;
+                        let expected_body_size = match self.calculate_expected_body_size(&request) {
+                            Ok(size) => size,
+                            Err(e) => {
+                                error!("Failed to calculate expected body size: {}", e);
+                                return Box::new(SimpleCommandGenerator::empty());
+                            }
+                        };
 
-                        let commands = vec![
+                        let commands: Vec<Box<dyn Command>> = vec![
                             Box::new(ReceiveHttp {
                                 event: Box::new(RequestHeaders {
                                     stream_id: self.stream_id,
@@ -1028,11 +1051,17 @@ impl Http1Server {
                         ];
 
                         self.state = Http1ServerState::ReadBody;
-                        return Ok(commands);
+                        return Box::new(SimpleCommandGenerator::new(commands));
                     }
                     Err(e) => {
-                        let error_response = self.make_error_response(400, &e)?;
-                        return Ok(vec![
+                        let error_response = match self.make_error_response(400, &e) {
+                            Ok(r) => r,
+                            Err(err) => {
+                                error!("Failed to make error response: {}", err);
+                                return Box::new(SimpleCommandGenerator::empty());
+                            }
+                        };
+                        return Box::new(SimpleCommandGenerator::new(vec![
                             Box::new(SendData {
                                 connection: self.context.client_conn().clone(),
                                 data: error_response,
@@ -1040,7 +1069,7 @@ impl Http1Server {
                             Box::new(CloseConnection {
                                 connection: self.context.client_conn().clone(),
                             }),
-                        ]);
+                        ]));
                     }
                 }
             }
@@ -1050,14 +1079,14 @@ impl Http1Server {
                 debug!("Client closed connection before completing request headers: {:?}",
                        String::from_utf8_lossy(&buf_content));
             }
-            return Ok(vec![
+            return Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(CloseConnection {
                     connection: self.context.client_conn().clone(),
                 })
-            ]);
+            ]));
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     /// Parse HTTP request head, matching Python's read_request_head
@@ -1128,7 +1157,7 @@ impl Http1Server {
     }
 
     /// Mark request or response as done, matching Python's mark_done method
-    async fn mark_done(&mut self, request: bool, response: bool) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn mark_done(&mut self, request: bool, response: bool) -> Box<dyn CommandGenerator<()>> {
         if request {
             self.request_done = true;
         }
@@ -1139,17 +1168,17 @@ impl Http1Server {
         if self.request_done && self.response_done {
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
                 if self.should_make_pipe(request, response) {
-                    return self.make_pipe().await;
+                    return self.make_pipe();
                 }
 
                 let connection_done = self.should_close_connection(request, response);
                 if connection_done {
                     self.state = Http1ServerState::Done;
-                    return Ok(vec![
+                    return Box::new(SimpleCommandGenerator::new(vec![
                         Box::new(CloseConnection {
                             connection: self.context.client_conn().clone(),
                         })
-                    ]);
+                    ]));
                 }
             }
 
@@ -1166,7 +1195,7 @@ impl Http1Server {
             self.state = Http1ServerState::Wait;
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     fn should_make_pipe(&self, request: &HTTPRequest, response: &HTTPResponse) -> bool {
@@ -1189,10 +1218,10 @@ impl Http1Server {
             .unwrap_or(false))
     }
 
-    async fn make_pipe(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn make_pipe(&mut self) -> Box<dyn CommandGenerator<()>> {
         self.state = Http1ServerState::Passthrough;
         // TODO: Handle any buffered data
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     fn assemble_response_head(&self, response: &HTTPResponse) -> Result<Vec<u8>, ProxyError> {
@@ -1287,37 +1316,49 @@ impl Layer for Http1Server {
     }
 }
 
-#[allow(dead_code)]
 impl Http1Server {
     /// Read HTTP request body, matching Python's read_body method
-    async fn read_body(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    #[allow(dead_code)]
+    fn read_body(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if let Some(ref request) = self.request {
                 self.receive_buffer.extend(&data_received.data);
 
-                let expected_body_size = self.calculate_expected_body_size(request)?;
+                let expected_body_size = match self.calculate_expected_body_size(request) {
+                    Ok(size) => size,
+                    Err(e) => {
+                        error!("Failed to calculate expected body size: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
 
                 // Handle different body reading strategies
                 if expected_body_size == 0 {
                     // No body expected, mark request as done
-                    return self.mark_done(true, false).await;
+                    return self.mark_done(true, false);
                 } else if expected_body_size == usize::MAX {
                     // Chunked encoding - process chunks
-                    return self.read_chunked_body().await;
+                    return self.read_chunked_body();
                 } else {
                     // Content-Length specified
-                    return self.read_content_length_body(expected_body_size).await;
+                    return self.read_content_length_body(expected_body_size);
                 }
             }
         } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             // Handle connection closed during body reading
             if let Some(ref request) = self.request {
-                let expected_body_size = self.calculate_expected_body_size(request)?;
+                let expected_body_size = match self.calculate_expected_body_size(request) {
+                    Ok(size) => size,
+                    Err(e) => {
+                        error!("Failed to calculate expected body size: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
                 if expected_body_size == usize::MAX || expected_body_size == usize::MAX - 1 {
                     // Read-until-EOF semantics for HTTP/1.0 or no Content-Length
                     let remaining_data = self.receive_buffer.buf.clone();
                     if !remaining_data.is_empty() {
-                        let commands = vec![
+                        let commands: Vec<Box<dyn Command>> = vec![
                             Box::new(ReceiveHttp {
                                 event: Box::new(RequestData {
                                     stream_id: self.stream_id,
@@ -1326,24 +1367,24 @@ impl Http1Server {
                             }) as Box<dyn Command>
                         ];
                         self.receive_buffer.clear();
-                        return Ok(commands);
+                        return Box::new(SimpleCommandGenerator::new(commands));
                     }
-                    return self.mark_done(true, false).await;
+                    return self.mark_done(true, false);
                 }
             }
-            return Ok(vec![
+            return Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(CloseConnection {
                     connection: self.context.client_conn().clone(),
                 })
-            ]);
+            ]));
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     /// Read chunked request body
-    async fn read_chunked_body(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let mut commands = Vec::new();
+    fn read_chunked_body(&mut self) -> Box<dyn CommandGenerator<()>> {
+        let mut commands: Vec<Box<dyn Command>> = Vec::new();
 
         loop {
             // Try to read chunk size line
@@ -1355,7 +1396,7 @@ impl Http1Server {
                 let chunk_size = match usize::from_str_radix(chunk_size_str.trim(), 16) {
                     Ok(size) => size,
                     Err(_) => {
-                        return Ok(vec![
+                        return Box::new(SimpleCommandGenerator::new(vec![
                             Box::new(ReceiveHttp {
                                 event: Box::new(RequestProtocolError {
                                     stream_id: self.stream_id,
@@ -1363,7 +1404,7 @@ impl Http1Server {
                                     code: ErrorCode::GenericClientError,
                                 }),
                             })
-                        ]);
+                        ]));
                     }
                 };
 
@@ -1377,8 +1418,12 @@ impl Http1Server {
                             stream_id: self.stream_id,
                         }),
                     }) as Box<dyn Command>);
-                    commands.extend(self.mark_done(true, false).await?);
-                    return Ok(commands);
+                    // Extract commands from mark_done generator
+                    let mut gen = self.mark_done(true, false);
+                    while let Some(cmd) = gen.next_command() {
+                        commands.push(cmd);
+                    }
+                    return Box::new(SimpleCommandGenerator::new(commands));
                 }
 
                 // Check if we have the full chunk + CRLF
@@ -1402,15 +1447,15 @@ impl Http1Server {
             }
         }
 
-        Ok(commands)
+        Box::new(SimpleCommandGenerator::new(commands))
     }
 
     /// Read content-length body
-    async fn read_content_length_body(&mut self, expected_size: usize) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn read_content_length_body(&mut self, expected_size: usize) -> Box<dyn CommandGenerator<()>> {
         if self.receive_buffer.len() >= expected_size {
             let body_data = self.receive_buffer.buf.drain(..expected_size).collect::<Vec<u8>>();
 
-            let mut commands = vec![
+            let mut commands: Vec<Box<dyn Command>> = vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(RequestData {
                         stream_id: self.stream_id,
@@ -1424,11 +1469,15 @@ impl Http1Server {
                 }) as Box<dyn Command>
             ];
 
-            commands.extend(self.mark_done(true, false).await?);
-            Ok(commands)
+            // Extract commands from mark_done generator
+            let mut gen = self.mark_done(true, false);
+            while let Some(cmd) = gen.next_command() {
+                commands.push(cmd);
+            }
+            Box::new(SimpleCommandGenerator::new(commands))
         } else {
             // Need more data
-            Ok(vec![])
+            Box::new(SimpleCommandGenerator::empty())
         }
     }
 
@@ -1442,6 +1491,7 @@ impl Http1Server {
             .position(|window| window == b"\r\n\r\n")
     }
 
+    #[allow(dead_code)]
     fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
         // Try to downcast to each HTTP event type
         if let Some(e) = event.as_any().downcast_ref::<ResponseHeaders>() {
@@ -1500,15 +1550,15 @@ impl Http1Client {
     }
 
     /// Send HTTP event to server, matching Python's send method
-    pub async fn send_event(&mut self, event: Box<dyn HttpEvent>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let mut commands = Vec::new();
+    pub fn send_event(&mut self, event: Box<dyn HttpEvent>) -> Box<dyn CommandGenerator<()>> {
+        let mut commands: Vec<Box<dyn Command>> = Vec::new();
 
         // Handle RequestProtocolError separately
         if let Some(_req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
             commands.push(Box::new(CloseConnection {
                 connection: self.context.server_conn().cloned().unwrap_or_default(),
             }) as Box<dyn Command>);
-            return Ok(commands);
+            return Box::new(SimpleCommandGenerator::new(commands));
         }
 
         // Set stream ID if this is the first event
@@ -1517,13 +1567,15 @@ impl Http1Client {
                 self.stream_id = Some(req_headers.stream_id);
                 self.request = Some(req_headers.request.clone());
             } else {
-                return Err(ProxyError::Proxy("Expected RequestHeaders as first event".to_string()));
+                error!("Expected RequestHeaders as first event");
+                return Box::new(SimpleCommandGenerator::empty());
             }
         }
 
         // Verify stream ID matches
         if Some(event.stream_id()) != self.stream_id {
-            return Err(ProxyError::Proxy("Stream ID mismatch".to_string()));
+            error!("Stream ID mismatch");
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         match event.as_ref() {
@@ -1558,7 +1610,13 @@ impl Http1Client {
                     }
                 }
 
-                let raw_request = self.assemble_request_head(&request)?;
+                let raw_request = match self.assemble_request_head(&request) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("Failed to assemble request head: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
                 commands.push(Box::new(SendData {
                     connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: raw_request,
@@ -1592,7 +1650,13 @@ impl Http1Client {
                     } else {
                         // Check if we need to half-close for read-until-EOF semantics
                         let expected_body_size = if let Some(ref response) = self.response {
-                            self.calculate_expected_response_body_size(request, response)?
+                            match self.calculate_expected_response_body_size(request, response) {
+                                Ok(size) => size,
+                                Err(e) => {
+                                    error!("Failed to calculate expected body size: {}", e);
+                                    0
+                                }
+                            }
                         } else {
                             0
                         };
@@ -1604,28 +1668,32 @@ impl Http1Client {
                         }
                     }
                 }
-                commands.extend(self.mark_done(true, false).await?);
+                // Extract commands from mark_done generator
+                let mut gen = self.mark_done(true, false);
+                while let Some(cmd) = gen.next_command() {
+                    commands.push(cmd);
+                }
             }
             _ => {
-                return Err(ProxyError::Proxy(format!("Unexpected HTTP event: {:?}",
-                    std::any::type_name_of_val(event.as_ref()))));
+                error!("Unexpected HTTP event: {:?}", std::any::type_name_of_val(event.as_ref()));
+                return Box::new(SimpleCommandGenerator::empty());
             }
         }
 
-        Ok(commands)
+        Box::new(SimpleCommandGenerator::new(commands))
     }
 
     /// Read HTTP response headers, matching Python's read_headers method
-    pub async fn read_headers(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn read_headers(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if self.request.is_none() {
                 // Unexpected data from server
                 warn!("Unexpected data from server: {:?}", String::from_utf8_lossy(&data_received.data));
-                return Ok(vec![
+                return Box::new(SimpleCommandGenerator::new(vec![
                     Box::new(CloseConnection {
                         connection: self.context.server_conn().cloned().unwrap_or_default(),
                     })
-                ]);
+                ]));
             }
 
             self.receive_buffer.extend(&data_received.data);
@@ -1636,12 +1704,18 @@ impl Http1Client {
                         self.response = Some(response.clone());
 
                         let expected_body_size = if let Some(ref request) = self.request {
-                            self.calculate_expected_response_body_size(request, &response)?
+                            match self.calculate_expected_response_body_size(request, &response) {
+                                Ok(size) => size,
+                                Err(e) => {
+                                    error!("Failed to calculate expected body size: {}", e);
+                                    0
+                                }
+                            }
                         } else {
                             0
                         };
 
-                        let commands = vec![
+                        let commands: Vec<Box<dyn Command>> = vec![
                             Box::new(ReceiveHttp {
                                 event: Box::new(ResponseHeaders {
                                     stream_id: self.stream_id.unwrap(),
@@ -1652,10 +1726,10 @@ impl Http1Client {
                         ];
 
                         self.state = Http1ClientState::ReadBody;
-                        return Ok(commands);
+                        return Box::new(SimpleCommandGenerator::new(commands));
                     }
                     Err(e) => {
-                        return Ok(vec![
+                        return Box::new(SimpleCommandGenerator::new(vec![
                             Box::new(CloseConnection {
                                 connection: self.context.server_conn().cloned().unwrap_or_default(),
                             }),
@@ -1666,24 +1740,24 @@ impl Http1Client {
                                     code: ErrorCode::GenericServerError,
                                 }),
                             })
-                        ]);
+                        ]));
                     }
                 }
             }
         } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             if let Some(server_conn) = self.context.server_conn() {
                 if server_conn.state != ConnectionState::CLOSED {
-                    return Ok(vec![
+                    return Box::new(SimpleCommandGenerator::new(vec![
                         Box::new(CloseConnection {
                             connection: self.context.server_conn().cloned().unwrap_or_default(),
                         })
-                    ]);
+                    ]));
                 }
             }
 
             if let Some(stream_id) = self.stream_id {
                 if !self.receive_buffer.is_empty() {
-                    return Ok(vec![
+                    return Box::new(SimpleCommandGenerator::new(vec![
                         Box::new(ReceiveHttp {
                             event: Box::new(ResponseProtocolError {
                                 stream_id,
@@ -1692,9 +1766,9 @@ impl Http1Client {
                                 code: ErrorCode::GenericServerError,
                             }),
                         })
-                    ]);
+                    ]));
                 } else {
-                    return Ok(vec![
+                    return Box::new(SimpleCommandGenerator::new(vec![
                         Box::new(ReceiveHttp {
                             event: Box::new(ResponseProtocolError {
                                 stream_id,
@@ -1702,45 +1776,57 @@ impl Http1Client {
                                 code: ErrorCode::GenericServerError,
                             }),
                         })
-                    ]);
+                    ]));
                 }
             }
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     /// Read HTTP response body, matching Python's read_body method
-    pub async fn read_body(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn read_body(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
                 self.receive_buffer.extend(&data_received.data);
 
-                let expected_body_size = self.calculate_expected_response_body_size(request, response)?;
+                let expected_body_size = match self.calculate_expected_response_body_size(request, response) {
+                    Ok(size) => size,
+                    Err(e) => {
+                        error!("Failed to calculate expected body size: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
 
                 // Handle different body reading strategies
                 if expected_body_size == 0 {
                     // No body expected, mark response as done
-                    return self.mark_done(false, true).await;
+                    return self.mark_done(false, true);
                 } else if expected_body_size == usize::MAX {
                     // Chunked encoding - process chunks
-                    return self.read_chunked_response_body().await;
+                    return self.read_chunked_response_body();
                 } else if expected_body_size == usize::MAX - 1 {
                     // Read-until-EOF semantics
-                    return self.read_until_eof_body().await;
+                    return self.read_until_eof_body();
                 } else {
                     // Content-Length specified
-                    return self.read_content_length_response_body(expected_body_size).await;
+                    return self.read_content_length_response_body(expected_body_size);
                 }
             }
         } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
             // Handle connection closed during response body reading
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
-                let expected_body_size = self.calculate_expected_response_body_size(request, response)?;
+                let expected_body_size = match self.calculate_expected_response_body_size(request, response) {
+                    Ok(size) => size,
+                    Err(e) => {
+                        error!("Failed to calculate expected body size: {}", e);
+                        return Box::new(SimpleCommandGenerator::empty());
+                    }
+                };
                 if expected_body_size == usize::MAX - 1 {
                     // Read-until-EOF semantics - send remaining data and finish
                     let remaining_data = self.receive_buffer.buf.clone();
-                    let mut commands = Vec::new();
+                    let mut commands: Vec<Box<dyn Command>> = Vec::new();
 
                     if !remaining_data.is_empty() {
                         commands.push(Box::new(ReceiveHttp {
@@ -1758,18 +1844,22 @@ impl Http1Client {
                         }),
                     }) as Box<dyn Command>);
 
-                    commands.extend(self.mark_done(false, true).await?);
-                    return Ok(commands);
+                    // Extract commands from mark_done generator
+                    let mut gen = self.mark_done(false, true);
+                    while let Some(cmd) = gen.next_command() {
+                        commands.push(cmd);
+                    }
+                    return Box::new(SimpleCommandGenerator::new(commands));
                 }
             }
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     /// Read chunked response body
-    async fn read_chunked_response_body(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let mut commands = Vec::new();
+    fn read_chunked_response_body(&mut self) -> Box<dyn CommandGenerator<()>> {
+        let mut commands: Vec<Box<dyn Command>> = Vec::new();
 
         loop {
             // Try to read chunk size line
@@ -1781,7 +1871,7 @@ impl Http1Client {
                 let chunk_size = match usize::from_str_radix(chunk_size_str.trim(), 16) {
                     Ok(size) => size,
                     Err(_) => {
-                        return Ok(vec![
+                        return Box::new(SimpleCommandGenerator::new(vec![
                             Box::new(CloseConnection {
                                 connection: self.context.server_conn().cloned().unwrap_or_default(),
                             }),
@@ -1792,7 +1882,7 @@ impl Http1Client {
                                     code: ErrorCode::GenericServerError,
                                 }),
                             })
-                        ]);
+                        ]));
                     }
                 };
 
@@ -1806,8 +1896,12 @@ impl Http1Client {
                             stream_id: self.stream_id.unwrap(),
                         }),
                     }) as Box<dyn Command>);
-                    commands.extend(self.mark_done(false, true).await?);
-                    return Ok(commands);
+                    // Extract commands from mark_done generator
+                    let mut gen = self.mark_done(false, true);
+                    while let Some(cmd) = gen.next_command() {
+                        commands.push(cmd);
+                    }
+                    return Box::new(SimpleCommandGenerator::new(commands));
                 }
 
                 // Check if we have the full chunk + CRLF
@@ -1833,35 +1927,35 @@ impl Http1Client {
             }
         }
 
-        Ok(commands)
+        Box::new(SimpleCommandGenerator::new(commands))
     }
 
     /// Read response body until EOF
-    async fn read_until_eof_body(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn read_until_eof_body(&mut self) -> Box<dyn CommandGenerator<()>> {
         // In read-until-EOF mode, we consume all data until connection closes
         if !self.receive_buffer.is_empty() {
             let data = self.receive_buffer.buf.clone();
             self.receive_buffer.clear();
 
-            Ok(vec![
+            Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseData {
                         stream_id: self.stream_id.unwrap(),
                         data: data.into(),
                     }),
                 }) as Box<dyn Command>
-            ])
+            ]))
         } else {
-            Ok(vec![])
+            Box::new(SimpleCommandGenerator::empty())
         }
     }
 
     /// Read content-length response body
-    async fn read_content_length_response_body(&mut self, expected_size: usize) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn read_content_length_response_body(&mut self, expected_size: usize) -> Box<dyn CommandGenerator<()>> {
         if self.receive_buffer.len() >= expected_size {
             let body_data = self.receive_buffer.buf.drain(..expected_size).collect::<Vec<u8>>();
 
-            let mut commands = vec![
+            let mut commands: Vec<Box<dyn Command>> = vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseData {
                         stream_id: self.stream_id.unwrap(),
@@ -1875,11 +1969,15 @@ impl Http1Client {
                 }) as Box<dyn Command>
             ];
 
-            commands.extend(self.mark_done(false, true).await?);
-            Ok(commands)
+            // Extract commands from mark_done generator
+            let mut gen = self.mark_done(false, true);
+            while let Some(cmd) = gen.next_command() {
+                commands.push(cmd);
+            }
+            Box::new(SimpleCommandGenerator::new(commands))
         } else {
             // Need more data
-            Ok(vec![])
+            Box::new(SimpleCommandGenerator::empty())
         }
     }
 
@@ -2006,7 +2104,7 @@ impl Http1Client {
     }
 
     /// Mark request or response as done, matching Python's mark_done method
-    async fn mark_done(&mut self, request: bool, response: bool) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn mark_done(&mut self, request: bool, response: bool) -> Box<dyn CommandGenerator<()>> {
         if request {
             self.request_done = true;
         }
@@ -2017,7 +2115,7 @@ impl Http1Client {
         if self.request_done && self.response_done {
             if let (Some(ref request), Some(ref response)) = (&self.request, &self.response) {
                 if self.should_make_pipe(request, response) {
-                    return self.make_pipe().await;
+                    return self.make_pipe();
                 }
 
                 // Check if connection should be closed
@@ -2032,11 +2130,11 @@ impl Http1Client {
 
                 if connection_done {
                     self.state = Http1ClientState::Done;
-                    return Ok(vec![
+                    return Box::new(SimpleCommandGenerator::new(vec![
                         Box::new(CloseConnection {
                             connection: self.context.server_conn().cloned().unwrap_or_default(),
                         })
-                    ]);
+                    ]));
                 }
             }
 
@@ -2053,7 +2151,7 @@ impl Http1Client {
                 return self.read_headers(Box::new(DataReceived {
                     connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: vec![],
-                })).await;
+                }));
             }
         }
 
@@ -2061,7 +2159,7 @@ impl Http1Client {
             self.state = Http1ClientState::Wait;
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
     fn should_make_pipe(&self, request: &HTTPRequest, response: &HTTPResponse) -> bool {
@@ -2084,7 +2182,7 @@ impl Http1Client {
             .unwrap_or(false))
     }
 
-    async fn make_pipe(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn make_pipe(&mut self) -> Box<dyn CommandGenerator<()>> {
         self.state = Http1ClientState::Passthrough;
 
         // Handle any buffered data
@@ -2104,33 +2202,33 @@ impl Http1Client {
                     connection: self.context.server_conn().cloned().unwrap_or_default(),
                     data: already_received.to_vec(),
                 });
-                return self.handle_passthrough(passthrough_event).await;
+                return self.handle_passthrough(passthrough_event);
             }
         }
 
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 
-    async fn handle_passthrough(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_passthrough(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
-            Ok(vec![
+            Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseData {
                         stream_id: self.stream_id.unwrap_or(1),
                         data: data_received.data.clone().into(),
                     }),
                 }) as Box<dyn Command>
-            ])
+            ]))
         } else if let Some(_connection_closed) = event.as_any().downcast_ref::<ConnectionClosed>() {
-            Ok(vec![
+            Box::new(SimpleCommandGenerator::new(vec![
                 Box::new(ReceiveHttp {
                     event: Box::new(ResponseEndOfMessage {
                         stream_id: self.stream_id.unwrap_or(1),
                     }),
                 }) as Box<dyn Command>
-            ])
+            ]))
         } else {
-            Ok(vec![])
+            Box::new(SimpleCommandGenerator::empty())
         }
     }
 }
@@ -2178,7 +2276,7 @@ impl Http1Client {
         None
     }
 
-    async fn async_handle_event(&mut self, event: Box<dyn Event>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn sync_handle_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         debug!("Http1Client handling event in state {:?}: {:?}",
                self.state, std::any::type_name_of_val(&*event));
 
@@ -2186,34 +2284,35 @@ impl Http1Client {
             Http1ClientState::Start => {
                 if event.as_any().downcast_ref::<Start>().is_some() {
                     self.state = Http1ClientState::ReadHeaders;
-                    Ok(vec![])
+                    Box::new(SimpleCommandGenerator::empty())
                 } else {
-                    Err(ProxyError::Proxy("Expected Start event".to_string()))
+                    error!("Expected Start event");
+                    Box::new(SimpleCommandGenerator::empty())
                 }
             }
             Http1ClientState::ReadHeaders => {
-                self.read_headers(event).await
+                self.read_headers(event)
             }
             Http1ClientState::ReadBody => {
-                self.read_body(event).await
+                self.read_body(event)
             }
             Http1ClientState::Wait => {
                 // Wait for next request
                 if let Some(http_event) = self.try_extract_http_event(&event) {
-                    self.send_event(http_event).await
+                    self.send_event(http_event)
                 } else {
-                    Ok(vec![])
+                    Box::new(SimpleCommandGenerator::empty())
                 }
             }
             Http1ClientState::Done => {
-                Ok(vec![])
+                Box::new(SimpleCommandGenerator::empty())
             }
             Http1ClientState::Passthrough => {
-                self.handle_passthrough(event).await
+                self.handle_passthrough(event)
             }
             Http1ClientState::Errored => {
                 // Silently consume events in error state
-                Ok(vec![])
+                Box::new(SimpleCommandGenerator::empty())
             }
         }
     }
@@ -2786,13 +2885,13 @@ impl Http2Connection {
     }
 
     /// Close connection with error, matching Python's protocol_error method
-    pub async fn protocol_error(&mut self, message: String, _error_code: Option<h2::Reason>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn protocol_error(&mut self, message: String, _error_code: Option<h2::Reason>) -> Box<dyn CommandGenerator<()>> {
         warn!("HTTP/2 protocol error: {}", message);
 
         // Send GOAWAY frame
         // TODO: Implement GOAWAY sending with h2 library
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(Log {
                 message: format!("HTTP/2 protocol error: {}", message),
                 level: LogLevel::Error,
@@ -2800,11 +2899,11 @@ impl Http2Connection {
             Box::new(CloseConnection {
                 connection: (*self.conn).clone(),
             }),
-        ])
+        ]))
     }
 
     /// Close connection, matching Python's close_connection method
-    pub async fn close_connection(&mut self, msg: String) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn close_connection(&mut self, msg: String) -> Box<dyn CommandGenerator<()>> {
         let mut commands: Vec<Box<dyn Command>> = vec![
             Box::new(CloseConnection {
                 connection: (*self.conn).clone(),
@@ -2823,7 +2922,7 @@ impl Http2Connection {
         }
 
         self.streams.clear();
-        Ok(commands)
+        Box::new(SimpleCommandGenerator::new(commands))
     }
 }
 
@@ -2852,8 +2951,13 @@ impl Http2Server {
     }
 
     /// Handle HTTP/2 request received event, matching Python's handle_h2_event for RequestReceived
-    pub async fn handle_request_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let (host, port, method, scheme, _authority, path, headers) = parse_h2_request_headers(headers)?;
+    pub fn handle_request_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Box<dyn CommandGenerator<()>> {
+        let (host, port, method, scheme, _authority, path, headers) = match parse_h2_request_headers(headers) {
+            Ok(result) => result,
+            Err(e) => {
+                return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR));
+            }
+        };
 
         let mut request = crate::flow::HTTPRequest::new(
             String::from_utf8_lossy(&method).to_string(),
@@ -2875,7 +2979,7 @@ impl Http2Server {
         let stream_id = 1;
         self.base.streams.insert(stream_id, Http2StreamState::HeadersReceived);
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(ReceiveHttp {
                 event: Box::new(RequestHeaders {
                     stream_id,
@@ -2884,13 +2988,18 @@ impl Http2Server {
                     replay_flow: None,
                 }),
             }) as Box<dyn Command>
-        ])
+        ]))
     }
 
     /// Handle HTTP/2 informational response, matching Python's handle_h2_event for InformationalResponseReceived
-    pub async fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Box<dyn CommandGenerator<()>> {
         // HTTP/2 informational responses are swallowed (not forwarded)
-        let (pseudo_headers, _headers_map) = split_pseudo_headers(headers)?;
+        let (pseudo_headers, _headers_map) = match split_pseudo_headers(headers) {
+            Ok(result) => result,
+            Err(e) => {
+                return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR));
+            }
+        };
         let status = pseudo_headers.get(":status")
             .and_then(|s| String::from_utf8_lossy(s).parse::<u16>().ok())
             .unwrap_or(0);
@@ -2903,20 +3012,20 @@ impl Http2Server {
             _ => "Unknown",
         };
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(Log {
                 message: format!("Swallowing HTTP/2 informational response: {} {}", status, reason),
                 level: LogLevel::Info,
             })
-        ])
+        ]))
     }
 
     /// Handle HTTP/2 request from server (protocol error), matching Python's handle_h2_event for RequestReceived on client
-    pub async fn handle_request_from_server(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_request_from_server(&mut self) -> Box<dyn CommandGenerator<()>> {
         self.base.protocol_error(
             "HTTP/2 protocol error: received request from server".to_string(),
             Some(h2::Reason::PROTOCOL_ERROR)
-        ).await
+        )
     }
 }
 
@@ -2933,53 +3042,56 @@ impl Layer for Http2Server {
 
 #[allow(dead_code)]
 impl Http2Server {
-    async fn handle_response_headers(&mut self, event: ResponseHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_headers(&mut self, event: ResponseHeaders) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
-        let _headers = format_h2_response_headers(&self.base.context, &event)?;
+        let _headers = match format_h2_response_headers(&self.base.context, &event) {
+            Ok(h) => h,
+            Err(e) => return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR)),
+        };
         // TODO: Send headers using h2 library
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 
-    async fn handle_response_data(&mut self, event: ResponseData) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_data(&mut self, event: ResponseData) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         // TODO: Send data using h2 library
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 
-    async fn handle_response_end(&mut self, event: ResponseEndOfMessage) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_end(&mut self, event: ResponseEndOfMessage) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         // TODO: End stream using h2 library
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 
-    async fn handle_response_error(&mut self, event: ResponseProtocolError) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_response_error(&mut self, event: ResponseProtocolError) -> Box<dyn CommandGenerator<()>> {
         if self.base.is_closed(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         let status = event.code.http_status_code();
@@ -3001,12 +3113,12 @@ impl Http2Server {
             // TODO: Reset stream using h2 library
         }
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 }
 
@@ -3048,8 +3160,11 @@ impl Http2Client {
     }
 
     /// Handle HTTP/2 response received event, matching Python's handle_h2_event for ResponseReceived
-    pub async fn handle_response_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
-        let (status_code, headers) = parse_h2_response_headers(headers)?;
+    pub fn handle_response_received(&mut self, headers: Vec<(Bytes, Bytes)>) -> Box<dyn CommandGenerator<()>> {
+        let (status_code, headers) = match parse_h2_response_headers(headers) {
+            Ok(result) => result,
+            Err(e) => return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR)),
+        };
 
         let mut response = crate::flow::HTTPResponse::new(status_code, String::new());
         response.http_version = "HTTP/2.0".to_string();
@@ -3064,12 +3179,12 @@ impl Http2Client {
         // TODO: Get stream ID from h2 event
         let stream_id = 1;
         if self.base.streams.get(&stream_id) != Some(&Http2StreamState::ExpectingHeaders) {
-            return self.base.protocol_error("Received unexpected HTTP/2 response.".to_string(), Some(h2::Reason::PROTOCOL_ERROR)).await;
+            return self.base.protocol_error("Received unexpected HTTP/2 response.".to_string(), Some(h2::Reason::PROTOCOL_ERROR));
         }
 
         self.base.streams.insert(stream_id, Http2StreamState::HeadersReceived);
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(ReceiveHttp {
                 event: Box::new(ResponseHeaders {
                     stream_id,
@@ -3077,13 +3192,16 @@ impl Http2Client {
                     end_stream: false, // TODO: Determine from headers
                 }),
             }) as Box<dyn Command>
-        ])
+        ]))
     }
 
     /// Handle HTTP/2 informational response, matching Python's handle_h2_event for InformationalResponseReceived
-    pub async fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_informational_response(&mut self, headers: Vec<(Bytes, Bytes)>) -> Box<dyn CommandGenerator<()>> {
         // HTTP/2 informational responses are swallowed (not forwarded)
-        let (pseudo_headers, _headers_map) = split_pseudo_headers(headers)?;
+        let (pseudo_headers, _headers_map) = match split_pseudo_headers(headers) {
+            Ok(result) => result,
+            Err(e) => return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR)),
+        };
         let status = pseudo_headers.get(":status")
             .and_then(|s| String::from_utf8_lossy(s).parse::<u16>().ok())
             .unwrap_or(0);
@@ -3096,27 +3214,27 @@ impl Http2Client {
             _ => "Unknown",
         };
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(Log {
                 message: format!("Swallowing HTTP/2 informational response: {} {}", status, reason),
                 level: LogLevel::Info,
             })
-        ])
+        ]))
     }
 
     /// Handle HTTP/2 request from server (protocol error), matching Python's handle_h2_event for RequestReceived on client
-    pub async fn handle_request_from_server(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_request_from_server(&mut self) -> Box<dyn CommandGenerator<()>> {
         self.base.protocol_error(
             "HTTP/2 protocol error: received request from server".to_string(),
             Some(h2::Reason::PROTOCOL_ERROR)
-        ).await
+        )
     }
 
     /// Handle remote settings changed, matching Python's handle_h2_event for RemoteSettingsChanged
-    pub async fn handle_remote_settings_changed(&mut self) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    pub fn handle_remote_settings_changed(&mut self) -> Box<dyn CommandGenerator<()>> {
         // We have received at least one settings from now, can rely on max concurrency in remote_settings
         self.provisional_max_concurrency = None;
-        Ok(vec![])
+        Box::new(SimpleCommandGenerator::empty())
     }
 }
 
@@ -3133,7 +3251,7 @@ impl Layer for Http2Client {
 
 #[allow(dead_code)]
 impl Http2Client {
-    async fn handle_request_headers(&mut self, event: RequestHeaders) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_headers(&mut self, event: RequestHeaders) -> Box<dyn CommandGenerator<()>> {
         // Map stream IDs
         let ours = if let Some(ours) = self.our_stream_id.get(&event.stream_id) {
             *ours
@@ -3143,7 +3261,7 @@ impl Http2Client {
 
             if no_free_streams {
                 self.stream_queue.entry(event.stream_id).or_insert_with(Vec::new).push(Box::new(event));
-                return Ok(vec![]);
+                return Box::new(SimpleCommandGenerator::empty());
             }
 
             let ours = self.base.h2_conn.get_next_available_stream_id();
@@ -3152,44 +3270,47 @@ impl Http2Client {
             ours
         };
 
-        let _headers = format_h2_request_headers(&self.base.context, &event)?;
+        let _headers = match format_h2_request_headers(&self.base.context, &event) {
+            Ok(h) => h,
+            Err(e) => return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR)),
+        };
         // TODO: Send headers using h2 library
         self.base.streams.insert(ours as StreamId, Http2StreamState::ExpectingHeaders);
 
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 
-    async fn handle_request_data(&mut self, event: RequestData) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_data(&mut self, event: RequestData) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         // TODO: Send data using h2 library
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 
-    async fn handle_request_end(&mut self, event: RequestEndOfMessage) -> Result<Vec<Box<dyn Command>>, ProxyError> {
+    fn handle_request_end(&mut self, event: RequestEndOfMessage) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
-            return Ok(vec![]);
+            return Box::new(SimpleCommandGenerator::empty());
         }
 
         // TODO: End stream using h2 library
-        Ok(vec![
+        Box::new(SimpleCommandGenerator::new(vec![
             Box::new(SendData {
                 connection: (*self.base.conn).clone(),
                 data: self.base.data_to_send().unwrap_or_default().to_vec(),
             })
-        ])
+        ]))
     }
 }
 

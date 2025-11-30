@@ -1,7 +1,7 @@
 ---
 id: backend-007
 title: Convert Async Methods to Sync CommandGenerator
-status: todo
+status: done
 priority: critical
 tags:
 - setup
