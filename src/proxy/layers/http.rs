@@ -741,9 +741,9 @@ impl HttpStream {
 }
 
 impl Layer for HttpStream {
-    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
-        // TODO: Convert async HttpStream::handle_event to sync CommandGenerator pattern
-        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to internal handler
+        self.handle_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -847,9 +847,9 @@ impl HttpLayer {
 }
 
 impl Layer for HttpLayer {
-    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
-        // TODO: Convert async route_event to sync CommandGenerator pattern
-        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to route_event
+        self.route_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -1305,10 +1305,9 @@ impl Http1Connection for Http1Server {
 }
 
 impl Layer for Http1Server {
-    fn handle_event(&mut self, _event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
-        // Temporary placeholder implementation to match Layer trait
-        // TODO: Convert async methods to proper CommandGenerator pattern
-        Box::new(SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to sync_handle_event
+        self.sync_handle_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -1317,8 +1316,59 @@ impl Layer for Http1Server {
 }
 
 impl Http1Server {
+    /// Handle event based on current state, matching Python's _handle_event method
+    fn sync_handle_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
+        debug!("Http1Server handling event in state {:?}: {:?}",
+               self.state, std::any::type_name_of_val(&*event));
+
+        match self.state {
+            Http1ServerState::Start => {
+                if event.as_any().downcast_ref::<Start>().is_some() {
+                    self.state = Http1ServerState::ReadHeaders;
+                    Box::new(SimpleCommandGenerator::empty())
+                } else {
+                    error!("Expected Start event");
+                    Box::new(SimpleCommandGenerator::empty())
+                }
+            }
+            Http1ServerState::ReadHeaders => {
+                self.read_headers(event)
+            }
+            Http1ServerState::ReadBody => {
+                self.read_body(event)
+            }
+            Http1ServerState::Wait => {
+                // Wait for next request - handle HTTP events from the stream
+                if let Some(http_event) = self.try_extract_http_event(&event) {
+                    self.send_event(http_event)
+                } else {
+                    Box::new(SimpleCommandGenerator::empty())
+                }
+            }
+            Http1ServerState::Done => {
+                Box::new(SimpleCommandGenerator::empty())
+            }
+            Http1ServerState::Passthrough => {
+                // Forward data directly
+                if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
+                    Box::new(SimpleCommandGenerator::new(vec![
+                        Box::new(SendData {
+                            connection: self.context.client_conn().clone(),
+                            data: data_received.data.clone(),
+                        }) as Box<dyn Command>
+                    ]))
+                } else {
+                    Box::new(SimpleCommandGenerator::empty())
+                }
+            }
+            Http1ServerState::Errored => {
+                // Silently consume events in error state
+                Box::new(SimpleCommandGenerator::empty())
+            }
+        }
+    }
+
     /// Read HTTP request body, matching Python's read_body method
-    #[allow(dead_code)]
     fn read_body(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
         if let Some(data_received) = event.as_any().downcast_ref::<DataReceived>() {
             if let Some(ref request) = self.request {
@@ -1491,7 +1541,6 @@ impl Http1Server {
             .position(|window| window == b"\r\n\r\n")
     }
 
-    #[allow(dead_code)]
     fn try_extract_http_event(&self, event: &Box<dyn Event>) -> Option<Box<dyn HttpEvent>> {
         // Try to downcast to each HTTP event type
         if let Some(e) = event.as_any().downcast_ref::<ResponseHeaders>() {
@@ -2256,9 +2305,9 @@ impl Http1Connection for Http1Client {
 }
 
 impl Layer for Http1Client {
-    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
-        // TODO: Convert async handle_event to sync CommandGenerator pattern
-        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to sync_handle_event
+        self.sync_handle_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -2266,7 +2315,6 @@ impl Layer for Http1Client {
     }
 }
 
-#[allow(dead_code)]
 impl Http1Client {
     /// Try to extract an HTTP event from a generic event
     /// This is used in the Wait state to handle incoming HTTP events
@@ -2423,12 +2471,13 @@ impl Default for Http2Config {
 /// Buffered HTTP/2 connection wrapper, matching Python's BufferedH2Connection
 /// This wraps h2 server/client connection and adds internal send buffers
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct BufferedH2Connection {
     // We'll store connection state and handle it manually to match Python's approach
     stream_buffers: HashMap<u32, VecDeque<SendH2Data>>,
+    #[allow(dead_code)] // TODO: Use for trailer support
     stream_trailers: HashMap<u32, Vec<(Bytes, Bytes)>>,
     max_frame_size: u32,
+    #[allow(dead_code)] // TODO: Use for flow control
     initial_window_size: u32,
     /// Number of outbound streams currently open
     pub open_outbound_streams: u32,
@@ -2556,7 +2605,6 @@ pub struct Http2Connection {
     pub config: Http2Config,
 }
 
-#[allow(dead_code)]
 impl Http2Connection {
     pub fn new(context: Context, conn: Arc<Connection>, config: Http2Config) -> Self {
         // Create the buffered H2 connection wrapper
@@ -2647,6 +2695,7 @@ impl Http2Connection {
         Box::new(crate::proxy::layer::SimpleCommandGenerator::new(commands))
     }
 
+    #[allow(dead_code)] // TODO: Use in handle_h2_event for DataReceived
     fn handle_data_received(&mut self, stream_id: u32, data: Bytes, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         let stream_id = stream_id as StreamId;
 
@@ -2685,6 +2734,7 @@ impl Http2Connection {
         Box::new(crate::proxy::layer::SimpleCommandGenerator::new(commands))
     }
 
+    #[allow(dead_code)] // TODO: Use in handle_h2_event for HeadersReceived
     fn handle_headers_received(&mut self, stream_id: u32, headers: Vec<(Bytes, Bytes)>, end_stream: bool) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
         let stream_id = stream_id as StreamId;
 
@@ -2792,7 +2842,7 @@ impl Http2Connection {
         Box::new(SimpleCommandGenerator::new(vec![]))
     }
 
-
+    #[allow(dead_code)] // TODO: Use in handle_headers_received
     fn parse_h2_headers_from_vec(&self, headers: Vec<(Bytes, Bytes)>) -> Result<(http::HeaderMap, HashMap<String, String>), ProxyError> {
         let mut header_map = http::HeaderMap::new();
         let mut pseudo_headers = HashMap::new();
@@ -2820,6 +2870,7 @@ impl Http2Connection {
         Ok((header_map, pseudo_headers))
     }
 
+    #[allow(dead_code)] // TODO: Use in handle_headers_received
     fn create_request_from_headers(&self, pseudo_headers: HashMap<String, String>, headers: http::HeaderMap) -> Result<HTTPRequest, ProxyError> {
         let method = pseudo_headers.get(":method")
             .ok_or_else(|| ProxyError::Proxy("Required pseudo header is missing: :method".to_string()))?;
@@ -3030,9 +3081,9 @@ impl Http2Server {
 }
 
 impl Layer for Http2Server {
-    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
-        // TODO: Convert async handle_event to sync CommandGenerator pattern
-        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to sync_handle_event
+        self.sync_handle_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -3040,8 +3091,61 @@ impl Layer for Http2Server {
     }
 }
 
-#[allow(dead_code)]
 impl Http2Server {
+    /// Handle event and route to appropriate handler based on event type
+    fn sync_handle_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
+        debug!("Http2Server handling event: {:?}", std::any::type_name_of_val(&*event));
+
+        // Handle Start event
+        if event.as_any().downcast_ref::<Start>().is_some() {
+            return Box::new(SimpleCommandGenerator::empty());
+        }
+
+        // Handle DataReceived for H2 frame processing
+        if let Some(data_event) = event.as_any().downcast_ref::<DataReceived>() {
+            // Process the data through h2_conn.receive_data and handle H2 events
+            match self.base.h2_conn.receive_data(&data_event.data) {
+                Ok(h2_events) => {
+                    let mut all_commands: Vec<Box<dyn Command>> = Vec::new();
+                    for h2_event in h2_events {
+                        let gen = self.base.handle_h2_event(h2_event);
+                        // Extract commands from generator
+                        let mut gen = gen;
+                        while let Some(cmd) = gen.next_command() {
+                            all_commands.push(cmd);
+                        }
+                    }
+                    return Box::new(SimpleCommandGenerator::new(all_commands));
+                }
+                Err(e) => {
+                    return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR));
+                }
+            }
+        }
+
+        // Handle HTTP events for response transmission
+        if let Some(resp_headers) = event.as_any().downcast_ref::<ResponseHeaders>() {
+            return self.handle_response_headers(resp_headers.clone());
+        }
+        if let Some(resp_data) = event.as_any().downcast_ref::<ResponseData>() {
+            return self.handle_response_data(resp_data.clone());
+        }
+        if let Some(resp_end) = event.as_any().downcast_ref::<ResponseEndOfMessage>() {
+            return self.handle_response_end(resp_end.clone());
+        }
+        if let Some(resp_error) = event.as_any().downcast_ref::<ResponseProtocolError>() {
+            return self.handle_response_error(resp_error.clone());
+        }
+
+        // Handle connection events
+        if event.as_any().downcast_ref::<ConnectionClosed>().is_some() {
+            return self.base.close_connection("Connection closed".to_string());
+        }
+
+        warn!("Http2Server received unhandled event: {:?}", std::any::type_name_of_val(&*event));
+        Box::new(SimpleCommandGenerator::empty())
+    }
+
     fn handle_response_headers(&mut self, event: ResponseHeaders) -> Box<dyn CommandGenerator<()>> {
         if !self.base.is_open_for_us(event.stream_id) {
             return Box::new(SimpleCommandGenerator::empty());
@@ -3239,9 +3343,9 @@ impl Http2Client {
 }
 
 impl Layer for Http2Client {
-    fn handle_event(&mut self, _event: crate::proxy::events::AnyEvent) -> Box<dyn crate::proxy::layer::CommandGenerator<()>> {
-        // TODO: Convert async handle_event to sync CommandGenerator pattern
-        Box::new(crate::proxy::layer::SimpleCommandGenerator::empty())
+    fn handle_event(&mut self, event: AnyEvent) -> Box<dyn CommandGenerator<()>> {
+        // Convert AnyEvent to Box<dyn Event> and delegate to sync_handle_event
+        self.sync_handle_event(Box::new(event) as Box<dyn Event>)
     }
 
     fn layer_name(&self) -> &'static str {
@@ -3249,8 +3353,62 @@ impl Layer for Http2Client {
     }
 }
 
-#[allow(dead_code)]
 impl Http2Client {
+    /// Handle event and route to appropriate handler based on event type
+    fn sync_handle_event(&mut self, event: Box<dyn Event>) -> Box<dyn CommandGenerator<()>> {
+        debug!("Http2Client handling event: {:?}", std::any::type_name_of_val(&*event));
+
+        // Handle Start event
+        if event.as_any().downcast_ref::<Start>().is_some() {
+            return Box::new(SimpleCommandGenerator::empty());
+        }
+
+        // Handle DataReceived for H2 frame processing
+        if let Some(data_event) = event.as_any().downcast_ref::<DataReceived>() {
+            // Process the data through h2_conn.receive_data and handle H2 events
+            match self.base.h2_conn.receive_data(&data_event.data) {
+                Ok(h2_events) => {
+                    let mut all_commands: Vec<Box<dyn Command>> = Vec::new();
+                    for h2_event in h2_events {
+                        let gen = self.base.handle_h2_event(h2_event);
+                        // Extract commands from generator
+                        let mut gen = gen;
+                        while let Some(cmd) = gen.next_command() {
+                            all_commands.push(cmd);
+                        }
+                    }
+                    return Box::new(SimpleCommandGenerator::new(all_commands));
+                }
+                Err(e) => {
+                    return self.base.protocol_error(e.to_string(), Some(h2::Reason::PROTOCOL_ERROR));
+                }
+            }
+        }
+
+        // Handle HTTP events for request transmission
+        if let Some(req_headers) = event.as_any().downcast_ref::<RequestHeaders>() {
+            return self.handle_request_headers(req_headers.clone());
+        }
+        if let Some(req_data) = event.as_any().downcast_ref::<RequestData>() {
+            return self.handle_request_data(req_data.clone());
+        }
+        if let Some(req_end) = event.as_any().downcast_ref::<RequestEndOfMessage>() {
+            return self.handle_request_end(req_end.clone());
+        }
+        if let Some(req_error) = event.as_any().downcast_ref::<RequestProtocolError>() {
+            // Handle request protocol error - close the stream
+            return self.base.protocol_error(req_error.message.clone(), Some(h2::Reason::CANCEL));
+        }
+
+        // Handle connection events
+        if event.as_any().downcast_ref::<ConnectionClosed>().is_some() {
+            return self.base.close_connection("Connection closed".to_string());
+        }
+
+        warn!("Http2Client received unhandled event: {:?}", std::any::type_name_of_val(&*event));
+        Box::new(SimpleCommandGenerator::empty())
+    }
+
     fn handle_request_headers(&mut self, event: RequestHeaders) -> Box<dyn CommandGenerator<()>> {
         // Map stream IDs
         let ours = if let Some(ours) = self.our_stream_id.get(&event.stream_id) {
